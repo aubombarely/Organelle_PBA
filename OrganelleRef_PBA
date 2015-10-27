@@ -783,7 +783,9 @@ print_seqstats("Assembly Step 1 Results", \@seqstats01);
 ##    Action: Rescaffold using SSPACE-Long
 ##    Then goes to option 1
 ##
-## The fraction that decide if it goes to 2 or 1 should be changeble by the
+## 3- Check circularity to close the genome
+##
+## The fraction that decide if it goes to 2 or 1 should be changeable by the
 ## user
 
 print_header("3) Running scaffolding (SSPACE)");
@@ -846,6 +848,66 @@ while( my $seqobj02 = $asb02io->next_seq() ) {
 
 print_header("4) Evaluating repetitive regions");
 
+
+##################################################################
+## Check for circularity
+##################################################################
+
+print STDERR "\t4.1- Checking circularity\n";
+
+## It will use the check circularity script;
+## It will produce the output as stdout, so it will redirect the
+## the output into a file
+
+my $temp_cc = File::Spec->catfile($outdir, "04_checkcirc_tempdir");
+my $checkcirc_out = File::Spec->catfile($outdir, "04_checkcirc_out.txt");
+my $checkcirc_cmd = "check_circularity.pl $assembly03 $temp_cc --min_overlap_len 100 --force > $checkcirc_out";
+my @checkcirc01run = run( command => $checkcirc_cmd, verbose => $opt_V );
+
+
+## By default define the assembly 04 as 03
+my $assembly04 = $assembly03;
+
+open my $checkcirc_fh, '<', $checkcirc_out;
+while(<$checkcirc_fh>) {
+
+    chomp($_); 
+    if ($_ =~ m/.+?\s+circular\s+\[(\d+)\-(\d+)\]\s+\w+\s+\[(\d+)\-(\d+)\]\s+\w+\s+(.+)\%\s+\w+/) {
+
+        my $p_st = $1;
+        my $p_en = $2;
+        my $e_st = $3;
+        my $e_en = $4;
+        my $perc = $5;
+        print STDERR "\tCircularity found: $p_st-$p_en matches $e_st-$e_en ($perc %)\n";
+
+        ## It will remove the repeat
+        my $asb04io = Bio::SeqIO->new( -file => "$assembly03", -type => 'fasta' );
+        $assembly04 = File::Spec->catfile($outdir,"04_assembly04_no_circ.fa");
+        my $asb05io = Bio::SeqIO->new( -file => ">$assembly04", -type => 'fasta' );
+	print STDERR "\tRemoving redundancy produced by circularity\n\n";
+
+        while (my $wseqobj = $asb04io->next_seq()) {
+
+	    my $c_end = $e_st - 1;
+            my $subseq = $wseqobj->trunc(1, $c_end);
+            my $newid = $subseq->id()."_1_".$c_end;
+            $subseq->id($newid);
+
+            $asb05io->write_seq($subseq);
+        }
+    }
+    elsif ($checkcirc_out =~ m/linear/) {
+
+	print STDERR "\tNo circularity detected.\n\n";
+    }
+}
+
+
+####################################################################
+## Evaluate repetitive regions through mapping
+####################################################################
+
 ## To evaluate the repetitive region it will map back the
 ## reads and check the coverage.
 
@@ -853,7 +915,7 @@ my $blasr2out = File::Spec->catfile($outdir, "04_BlasR_out.sam");
 $blasr_args{'-out'} = $blasr2out;
 
 
-my @blasr2cmd = ($exepath{'blasr'}, $blasr_in, $assembly03);
+my @blasr2cmd = ($exepath{'blasr'}, $blasr_in, $assembly04);
 foreach my $blasr_k (sort keys %blasr_args) {
 
     push @blasr2cmd, $blasr_k;
@@ -867,7 +929,7 @@ foreach my $blasr_k (sort keys %blasr_args) {
 
 push @blasr2cmd, "-sam";
 
-print STDERR "\t4.1- Running BlasR re-mapping.\n\n";
+print STDERR "\t4.2- Running BlasR re-mapping.\n\n";
 
 my @blasr02run = run( command => \@blasr2cmd, verbose => $opt_V );
 
@@ -878,14 +940,14 @@ my @blasr02run = run( command => \@blasr2cmd, verbose => $opt_V );
 my $bamout = File::Spec->catfile($outdir, "04_BlasR_out.bam");
 my $samtools01cmd = "$exepath{samtools} view -F4 -Sb -o $bamout $blasr2out";
 
-print STDERR "\t4.2- Running samtools view (Sam to Bam).\n\n";
+print STDERR "\t4.3- Running samtools view (Sam to Bam).\n\n";
 
 my @sam01run = run( command => $samtools01cmd, verbose => $opt_V );
 
 my $bamout_s = File::Spec->catfile($outdir, "04_BlasR_out");
 my $samtools02cmd = "$exepath{samtools} sort $bamout $bamout_s";
 
-print STDERR "\t4.3- Sorting bam file.\n\n";
+print STDERR "\t4.4- Sorting bam file.\n\n";
 
 my @sam02run = run( command => $samtools02cmd, verbose => $opt_V );
 
@@ -904,7 +966,7 @@ print $gemfh "$seqstats02[3]\t$seqstats02[2]\n";
 
 ## And then, run bedtools genome cov
 
-print STDERR "\t4.4- Calculating coverage.\n\n";
+print STDERR "\t4.5- Calculating coverage.\n\n";
 
 my $bedgc01cmd = "$exepath{bedtools} genomecov -d -ibam $bamout -g $gemsize";
 
@@ -941,7 +1003,7 @@ print STDERR "\tAverage coverage:\t$covstats{c_average}\n";
 print STDERR "\tLower limit coverage:\t$covstats{lower_limit}\n";
 print STDERR "\tUpper limit coverage:\t$covstats{upper_limit}\n\n";
 
-print STDERR "\t4.5- Getting the breaking points\n";
+print STDERR "\t4.6- Getting the breaking points\n";
 
 ## Now it will get the sequence break points based in the blocks 
 my $breakpoints_href = get_breakpoints($covstats{covdata});
@@ -957,7 +1019,9 @@ print STDERR "\t$n_breaks breaking points have been detected\n\n";
 if (scalar(keys %breaks) == 1) {
 
     print STDERR "\n\tNo repeats breaking points detected.\n";
-    print STDERR "\n\tFINAL ASSEMBLY FILE: $assembly03\n";
+    print STDERR "\n\tFINAL ASSEMBLY FILE: $assembly04\n";
+    my @seqstats03 = get_seqstats($assembly04, $refsize);
+    print_seqstats("Final Assembly Results", \@seqstats03);
 }
 else {
 
@@ -967,11 +1031,11 @@ else {
     ## do the revcom
     ## and rescaffold the four fragments.
 
-    print STDERR "\t4.6- Breaking the assembly.\n";
+    print STDERR "\t4.6.1- Breaking the assembly.\n";
     
-    my $asb04io = Bio::SeqIO->new( -file => "$assembly03", -type => 'fasta' );
-    my $assembly04 = File::Spec->catfile($outdir,"05_assembly03breaks.fa");
-    my $asb05io = Bio::SeqIO->new( -file => ">$assembly04", -type => 'fasta' );
+    my $asb04io = Bio::SeqIO->new( -file => "$assembly04", -type => 'fasta' );
+    my $assembly05 = File::Spec->catfile($outdir,"05_assembly03breaks.fa");
+    my $asb05io = Bio::SeqIO->new( -file => ">$assembly05", -type => 'fasta' );
 
     ## Additionally it will store the seqobjects into an array for
     ## further comparisons
@@ -996,105 +1060,103 @@ else {
 	    $asb05io->write_seq($subseq);
 	    $c++;
 	}
-    }
-    print STDERR "\t$assembly03 has been broken in $c subsequences.\n\n";
 
-    print STDERR "\t4.7- Comparing fragments.\n";
+	print STDERR "\t$assembly04 has been broken in $c subsequences.\n\n";
+	print STDERR "\t4.6.2- Comparing fragments.\n";
 
-    ## It will run bl2seq using a Blast factory object.
-    my $blastfact = Bio::Tools::Run::StandAloneBlastPlus->new();
+	## It will run bl2seq using a Blast factory object.
+	my $blastfact = Bio::Tools::Run::StandAloneBlastPlus->new();
     
-    ## Define sequences to remove
-    my %rem = ();
-    my %revcom = ();
+	## Define sequences to remove
+	my %rem = ();
+	my %revcom = ();
 
-    my ($n, $m) = (0, 0);
-    foreach my $subseq1 (@subseqs) {
+	my ($n, $m) = (0, 0);
+	foreach my $subseq1 (@subseqs) {
 	
-	$n++;
-	my $sseqid1 = $subseq1->id();
+	    $n++;
+	    my $sseqid1 = $subseq1->id();
 
-	foreach my $subseq2 (@subseqs) {
+	    foreach my $subseq2 (@subseqs) {
 
-	    $m++;
-	    my $sseqid2 = $subseq2->id();
+		$m++;
+		my $sseqid2 = $subseq2->id();
 
-	    my $blastoutname = "05_BlastCmp_".$sseqid1."_".$sseqid2;
-	    my $outfilecmp = File::Spec->catfile($outdir, $blastoutname);
+		my $blastoutname = "05_BlastCmp_".$sseqid1."_".$sseqid2;
+		my $outfilecmp = File::Spec->catfile($outdir, $blastoutname);
 
-	    if ($sseqid1 ne $sseqid2) {
+		if ($sseqid1 ne $sseqid2) {
 		
-		print STDERR "\tComparing $sseqid1 with $sseqid2\n";
-		$blastfact->bl2seq( -method    => 'blastn',
-				    -query     => $subseq1,
-				    -subject   => $subseq2,
-				    -outfile   => $outfilecmp,
-				    -outformat => 6
-		    ); 
-		
-		
-		
-		while (my $blast_res = $blastfact->next_result()) {
-		    
-		    my $qlen = $blast_res->query_length();
-
-		    while (my $blast_hit = $blast_res->next_hit()) {
-			
-			my $hlen = $blast_hit->length();
-			
-			while (my $blast_hsp = $blast_hit->next_hsp()) {
-			
-			    my $qstrand = $blast_hsp->strand('query');
-			    my $hstrand = $blast_hsp->strand('hit');
-			    my $percident = $blast_hsp->percent_identity();
-			    print STDERR "\tQUERY:\t".$subseq1->id." ($qlen)\n";
-			    print STDERR "\tHIT:\t".$subseq2->id." ($hlen)\n";
-			    print STDERR "\tqSTRAND: $qstrand\n";
-			    print STDERR "\thSTRAND: $hstrand\n";
-			    print STDERR "\tPerc. Identity: $percident\n\n";
-
-			    if ($qlen < $hlen && $percident >= 97) {
-			    
-				$rem{$subseq1->id()} = 1;
-				print STDERR "\tREPEAT: ".$subseq1->id()."\n";
-
-				if ($qstrand != $hstrand) {
+		    print STDERR "\tComparing $sseqid1 with $sseqid2\n";
+		    $blastfact->bl2seq( -method    => 'blastn',
+					-query     => $subseq1,
+					-subject   => $subseq2,
+					-outfile   => $outfilecmp,
+					-outformat => 6
+			); 
 				
-				    $revcom{$subseq2->id()} = 1;
+		    while (my $blast_res = $blastfact->next_result()) {
+		    
+			my $qlen = $blast_res->query_length();
+
+			while (my $blast_hit = $blast_res->next_hit()) {
+			
+			    my $hlen = $blast_hit->length();
+			
+			    while (my $blast_hsp = $blast_hit->next_hsp()) {
+			
+				my $qstrand = $blast_hsp->strand('query');
+				my $hstrand = $blast_hsp->strand('hit');
+				my $percident = $blast_hsp->percent_identity();
+				print STDERR "\tQUERY:\t".$subseq1->id." ($qlen)\n";
+				print STDERR "\tHIT:\t".$subseq2->id." ($hlen)\n";
+				print STDERR "\tqSTRAND: $qstrand\n";
+				print STDERR "\thSTRAND: $hstrand\n";
+				print STDERR "\tPerc. Identity: $percident\n\n";
+
+				if ($qlen < $hlen && $percident >= 97) {
+			    
+				    $rem{$subseq1->id()} = 1;
+				    print STDERR "\tREPEAT: ".$subseq1->id()."\n";
+
+				    if ($qstrand != $hstrand) {
+				
+					$revcom{$subseq2->id()} = 1;
+				    }
 				}
 			    }
-			}
-		    }		    
+			}		    
+		    }
+		    ## Now it will process the output
 		}
-		## Now it will process the output
 	    }
 	}
-    }
+    
 
+	## At this point the script it ready to produce the sequences that will be
+	## rescaffolded
 
-    ## At this point the script it ready to produce the sequences that will be
-    ## rescaffolded
+	print STDERR "\t4.6.3- Selecting the no-redundant sequence set\n";
+	my $asb06io = Bio::SeqIO->new( -file => "$assembly05", -type => 'fasta' );
+	my $assembly06 = File::Spec->catfile($outdir,"06_assembly04breaks.fa");
+	my $asb07io = Bio::SeqIO->new( -file => ">$assembly06", -type => 'fasta' );
 
-    print STDERR "\t4.7- Selecting the no-redundant sequence set\n";
-    my $asb06io = Bio::SeqIO->new( -file => "$assembly04", -type => 'fasta' );
-    my $assembly05 = File::Spec->catfile($outdir,"06_assembly04breaks.fa");
-    my $asb07io = Bio::SeqIO->new( -file => ">$assembly05", -type => 'fasta' );
+	while (my $sseqobj = $asb06io->next_seq()) {
 
-    while (my $sseqobj = $asb06io->next_seq()) {
+	    my $sqid = $sseqobj->id(); 
+	    unless (exists $rem{$sqid}) {
 
-	my $sqid = $sseqobj->id(); 
-	unless (exists $rem{$sqid}) {
+		$asb07io->write_seq($sseqobj);
+	    }
 
-	    $asb07io->write_seq($sseqobj);
-	}
-
-	if (exists $revcom{$sqid}) {
+	    if (exists $revcom{$sqid}) {
 	
-	    my $revcomseq = $sseqobj->revcom();
-	}	
+		my $revcomseq = $sseqobj->revcom();
+	    }	
+	}
     }
 
-    print STDERR "\t4.8- Rescaffolding the sequences with SSPACE-Long.\n";
+    print STDERR "\t4.6.4- Rescaffolding the sequences with SSPACE-Long.\n";
     my $sspace2cmd = "perl $exepath{'SSPACE-LongRead.pl'} -c $assembly05";
     $sspace2cmd .= " -p $blasr_in";
 
@@ -1110,20 +1172,18 @@ else {
     my @sspace02run = run( command => $sspace2cmd, verbose => $opt_V );
 
     ## Get the results
-    my $preassembly06 = File::Spec->catfile($sspace2out, "scaffolds.fasta");
-    my $assembly06 = File::Spec->catfile($outdir,"06_organelle_assembly06.fa");
+    my $preassembly07 = File::Spec->catfile($sspace2out, "scaffolds.fasta");
+    my $assembly07 = File::Spec->catfile($outdir,"06_organelle_assembly06.fa");
 
     ## Copy to outside dir
-    copy($preassembly06, $assembly06);
+    copy($preassembly07, $assembly07);
 
-    print STDERR "\n\tFINAL ASSEMBLY FILE: $assembly06\n\n";
-    my @seqstats03 = get_seqstats($assembly06, $refsize);
+    print STDERR "\n\tFINAL ASSEMBLY FILE: $assembly07\n\n";
+    my @seqstats03 = get_seqstats($assembly07, $refsize);
     print_seqstats("Assembly Step 3 Results", \@seqstats03);
 
+}	
     
-}
-
-
 
 $date = `date`;
 chomp($date);

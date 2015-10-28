@@ -9,8 +9,11 @@
 
 =head1 SYPNOSIS
 
- OrganelleRef_PBA [-h]  -i <input_pacbio> -r <fasta_reference> -o <output_dir>
-
+ OrganelleRef_PBA [-h]  -i <input_pacbio> -r <fasta_reference> -o <output_dir> 
+                  [-t <input_type>] [-b <blasr_arguments>] [-s <sprai_ec_options>]
+                  [-c <sprai_pbsm_options>] [-x <fraction_for_scaffolding>]
+                  [-l <sspace_long_options>] [-n <repeat_block_size>] 
+                  [-m <coverage_ratio4repeats>]
 
 =head2 I<Flags:>
 
@@ -1206,24 +1209,73 @@ sub help {
   print STDERR <<EOF;
   $0:
 
-    Description:
-      
-      
-       
+      OrganelleRef_PBA
+      Pipeline to assemble plastid genomes using PacBio                                               
 
     Usage:
 
-      
+      OrganelleRef_PBA [-h]  -i <input_pacbio> -r <fasta_reference> -o <output_dir> 
+                       [-t <input_type>] [-b <blasr_arguments>] 
+                       [-s <sprai_ec_options>] [-c <sprai_pbsm_options>] 
+                       [-x <fraction_for_scaffolding>] [-l <sspace_long_options>] 
+                       [-n <repeat_block_size>] [-m <coverage_ratio4repeats>] 
+		       [-V]
 
-    Example:
-   
+    Description:
       
+      This program assembles the PacBio reads into a organelle fasta sequence.
+ 
+      Fasta (-t fasta) and Fastq (-t fastq, default) input can be used.
+
+      It works in several steps:
+ 
+       1- First mapping round of the PacBio reads with the organelle reference.
+ 
+       2- First assembly round of the mapped reads using Sprai.
+ 
+          + Evaluate the assembly, if longest contig size >= reference size
+                                            
+          it will move to resolve the repeat (4). Otherwise, it will try to 
+          improve the assembly using SSPACE-Long and the whole dataset (3).
+ 
+          + The completeness will be controled by -x <completeness_fraction>
+ 
+          By default 1.0 is used.
+  
+       3- Rescaffolding of the contigs produced by Sprai with SSPACE-Long.
+ 
+       4- First mapping round with the assembly to find repetitive regions.
+ 
+       5- Repetitive region break based in the coverage and a self blast
+ 
+       6- Second assembly round with the repetitive region.
+       
+     This program uses three different external programs:
+
+         a- BlasR (for mapping).        
+         b- samtools (to manipulate sam).
+         c- Blast, Sprai and WGS-Assembler (for assembly).
+         d- SSPACE-Long for rescaffolding. 
+         e- Bedtools to calculate coverage.
+
+      Optionally it can use seqtk to speed up the Fastq to Fasta conversion   
+      and the Fastq read selection.         
  
     Flags:
 
-      
-      -V <be_verbose>           be verbose and print the parsing status.
-      -h <help>                 print the help
+      -i <input_pacbio>           input PacBio subreads (mandatory)
+      -t <input_type>             input type (fasta or fastq; default=fastq)
+      -r <fasta_reference>        organelle reference genome, fasta format (mandatory)
+      -o <output_dir>             output directory (mandatory)
+      -b <blasr_arguments>        pass the blasr arguments as '-arg1=val1,-arg2=val2'
+      -s <sprai_ec_options>       passing sprai ec options as 'opt1=val1,opt2=val2'
+      -c <sprai_pbasm_options>    passing sprai pbasm options as 'opt1=val1,opt2=val2'
+      -x <complete_fraction>      fraction that decide for a new scaffolding (def. 1.0)
+      -l <sspace_long_options>    passing the SSPACE-Long options as 'opt1=val1...'
+      -n <repeat_block_size>      size of the block to detect repeats by cov (def. 1000)
+      -m <coverage_ratio4repeats> coverage ratio to define repetitive region (def. 1.6)    
+      -V <be_verbose>             be verbose and print the parsing status.
+      -h <help>                   print the help
 
 
 EOF

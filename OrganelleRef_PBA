@@ -10,10 +10,10 @@
 =head1 SYPNOSIS
 
  OrganelleRef_PBA [-h]  -i <input_pacbio> -r <fasta_reference> -o <output_dir> 
-                  [-t <input_type>] [-b <blasr_arguments>] [-s <sprai_ec_options>]
-                  [-c <sprai_pbsm_options>] [-x <fraction_for_scaffolding>]
-                  [-l <sspace_long_options>] [-n <repeat_block_size>] 
-                  [-m <coverage_ratio4repeats>]
+                  [-t <input_type>] [-b <blasr_arguments>] 
+                  [-s <sprai_ec_options>] [-c <sprai_pbsm_options>] 
+                  [-x <fraction_for_scaffolding>] [-l <sspace_long_options>] 
+                  [-n <repeat_block_size>] [-m <coverage_ratio4repeats>]
 
 =head2 I<Flags:>
 
@@ -134,6 +134,7 @@ use Getopt::Std;
 use File::Spec;
 use File::Basename;
 use File::Copy;
+use File::Path qw(make_path remove_tree);
 use IPC::Cmd qw[can_run run];
 
 use Bio::SeqIO;
@@ -447,6 +448,7 @@ my %sspace_ban = (
     '-c' => 1,
     '-p' => 1,
     '-b' => 1,
+    '-s' => 1
     );
 
 if ($sspace_argsline) {
@@ -793,6 +795,9 @@ print_seqstats("Assembly Step 1 Results", \@seqstats01);
 
 print_header("3) Running scaffolding (SSPACE)");
 
+## For the rescaffolding with be faster to run a separate step of mapping
+## with BlasR
+
 my $assembly02;
 if ($seqstats01[5] <= $asmfrc) {
 
@@ -800,19 +805,11 @@ if ($seqstats01[5] <= $asmfrc) {
     ## The SSPACE-Long options will be 
 
     print STDERR "\t3.1- Running SSPACE-Long\n";
-    my $sspace_cmd = "perl $exepath{'SSPACE-LongRead.pl'} -c $assembly01";
-    $sspace_cmd .= " -p $blasr_in";
 
-    ## Add the output
     my $sspace_out = File::Spec->catfile($outdir, "03_sspacelong_out");
-    $sspace_cmd .= " -b $sspace_out";
 
-    foreach my $sspace_opt (sort keys %sspace_args) {
-    
-	$sspace_cmd .= " $sspace_opt $sspace_args{$sspace_opt};";
-    }
-    
-    my @sspace01run = run( command => $sspace_cmd, verbose => $opt_V );
+    run_sspace_long(\%exepath, \%blasr_args, \%sspace_args, 
+		    $blasr_in, $assembly01, $sspace_out);
 
     ## Get the results
     my $preassembly02 = File::Spec->catfile($sspace_out, "scaffolds.fasta");
@@ -1063,116 +1060,125 @@ else {
 	    $asb05io->write_seq($subseq);
 	    $c++;
 	}
+    }
 
-	print STDERR "\t$assembly04 has been broken in $c subsequences.\n\n";
-	print STDERR "\t4.6.2- Comparing fragments.\n";
+    print STDERR "\t$assembly04 has been broken in $c subsequences.\n\n";
+    print STDERR "\t4.6.2- Comparing fragments.\n";
 
-	## It will run bl2seq using a Blast factory object.
-	my $blastfact = Bio::Tools::Run::StandAloneBlastPlus->new();
-    
-	## Define sequences to remove
-	my %rem = ();
-	my %revcom = ();
-
-	my ($n, $m) = (0, 0);
-	foreach my $subseq1 (@subseqs) {
+    ## It will compare the fragments using a self blast
+    ## 1- Create the DB with makeblastdb
 	
-	    $n++;
-	    my $sseqid1 = $subseq1->id();
+    my $mkblastdbcmd = "makeblastdb -in $assembly05 -dbtype nucl";
+    my @mkblastdb01run = run( command => $mkblastdbcmd, verbose => $opt_V );
 
-	    foreach my $subseq2 (@subseqs) {
+    ## 2- Now it will do the selfblast BlastN
+    my $selfbl01cmd = "blastn -query $assembly05 -db $assembly05 ";
+	
+    ## Create the outputname 
+    my $selfblastout = File::Spec->catfile($outdir,"05_frag_selfblast.txt");
+    $selfbl01cmd .= "-out $selfblastout ";
+	
+    ## Format
+    $selfbl01cmd .= "-outfmt '6 std qlen slen' ";
+	
+    ## Run the command
+    my @selfbl01run = run( command => $selfbl01cmd, verbose => $opt_V );
+	
+    ## Process the output
+    ## A repeat will be defined as a fragment of the sequence that 
+    ## match with other sequence with %id > 90% and %seq_l > 90%
 
-		$m++;
-		my $sseqid2 = $subseq2->id();
+    open my $sb_fh, '<', $selfblastout;
+    my %frag_repeat = ();
 
-		my $blastoutname = "05_BlastCmp_".$sseqid1."_".$sseqid2;
-		my $outfilecmp = File::Spec->catfile($outdir, $blastoutname);
-
-		if ($sseqid1 ne $sseqid2) {
+    while(<$sb_fh>) {
+	    
+	chomp($_);
+	my @blast_fds = split(/\t/, $_);
+	    
+	## Ignore the selfblast
+	if ($blast_fds[0] ne $blast_fds[1]) {
+	    
+	    my $identity = $blast_fds[2];
+	    my $coverage = $blast_fds[3] * 100 / $blast_fds[12];
+	    my $strand = "+";
+	    if ($blast_fds[9] > $blast_fds[10]) {
 		
-		    print STDERR "\tComparing $sseqid1 with $sseqid2\n";
-		    $blastfact->bl2seq( -method    => 'blastn',
-					-query     => $subseq1,
-					-subject   => $subseq2,
-					-outfile   => $outfilecmp,
-					-outformat => 6
-			); 
-				
-		    while (my $blast_res = $blastfact->next_result()) {
-		    
-			my $qlen = $blast_res->query_length();
-
-			while (my $blast_hit = $blast_res->next_hit()) {
-			
-			    my $hlen = $blast_hit->length();
-			
-			    while (my $blast_hsp = $blast_hit->next_hsp()) {
-			
-				my $qstrand = $blast_hsp->strand('query');
-				my $hstrand = $blast_hsp->strand('hit');
-				my $percident = $blast_hsp->percent_identity();
-				print STDERR "\tQUERY:\t".$subseq1->id." ($qlen)\n";
-				print STDERR "\tHIT:\t".$subseq2->id." ($hlen)\n";
-				print STDERR "\tqSTRAND: $qstrand\n";
-				print STDERR "\thSTRAND: $hstrand\n";
-				print STDERR "\tPerc. Identity: $percident\n\n";
-
-				if ($qlen < $hlen && $percident >= 97) {
-			    
-				    $rem{$subseq1->id()} = 1;
-				    print STDERR "\tREPEAT: ".$subseq1->id()."\n";
-
-				    if ($qstrand != $hstrand) {
-				
-					$revcom{$subseq2->id()} = 1;
-				    }
-				}
-			    }
-			}		    
-		    }
-		    ## Now it will process the output
-		}
+		$strand = "-";
 	    }
+	    
+	    if ($identity >= 90 && $coverage >= 90) {
+		
+		$frag_repeat{$blast_fds[0]} = {
+		    ide => $identity,
+		    cov => $coverage,
+		    str => $strand,
+		    pai => $blast_fds[1]			    
+		};
+	    }	    
 	}
-    
-
-	## At this point the script it ready to produce the sequences that will be
-	## rescaffolded
-
-	print STDERR "\t4.6.3- Selecting the no-redundant sequence set\n";
-	my $asb06io = Bio::SeqIO->new( -file => "$assembly05", -type => 'fasta' );
-	my $assembly06 = File::Spec->catfile($outdir,"06_assembly04breaks.fa");
-	my $asb07io = Bio::SeqIO->new( -file => ">$assembly06", -type => 'fasta' );
-
-	while (my $sseqobj = $asb06io->next_seq()) {
-
-	    my $sqid = $sseqobj->id(); 
-	    unless (exists $rem{$sqid}) {
-
-		$asb07io->write_seq($sseqobj);
-	    }
-
-	    if (exists $revcom{$sqid}) {
+    }
 	
-		my $revcomseq = $sseqobj->revcom();
-	    }	
+    ## Print message and select the reads
+    ## Get also the pair
+	
+    my %getrev = ();
+	
+    if (scalar(keys(%frag_repeat)) > 0) {
+	
+	print STDERR "\tRepeat found:\n";
+	foreach my $rep_id (sort keys %frag_repeat) {
+		
+	    my %rpstats = %{$frag_repeat{$rep_id}};
+	    
+	    print STDERR "\t\t$rep_id %IDENTITY=$rpstats{ide}";
+	    print STDERR " %COVERAGE=$rpstats{cov}";
+	    print STDERR " STRAND=$rpstats{str}";
+	    print STDERR " PAIRED_ID=$rpstats{pai}\n";
+	    $getrev{$rpstats{pai}} = 1;
 	}
     }
+   
 
-    print STDERR "\t4.6.4- Rescaffolding the sequences with SSPACE-Long.\n";
-    my $sspace2cmd = "perl $exepath{'SSPACE-LongRead.pl'} -c $assembly05";
-    $sspace2cmd .= " -p $blasr_in";
+    ## At this point the script it ready to produce the sequences that will
+    ## be rescaffolded
+	
+    print STDERR "\n\t4.6.3- Selecting the no-redundant sequence set\n";
+    my $asb06io = Bio::SeqIO->new(-file => "$assembly05", -type => 'fasta');
+    my $assembly06 = File::Spec->catfile($outdir,"06_assembly04breaks.fa");
+    my $asb07io = Bio::SeqIO->new(-file => ">$assembly06",-type => 'fasta');
 
-    ## Add the output
-    my $sspace2out = File::Spec->catfile($outdir, "06_sspacelong_out");
-    $sspace2cmd .= " -b $sspace2out";
+    my $cc = 1;
+    while (my $sseqobj = $asb06io->next_seq()) {
 
-    foreach my $sspace2opt (sort keys %sspace_args) {
-    
-	$sspace2cmd .= " $sspace2opt $sspace_args{$sspace2opt};";
+	my $sqid = $sseqobj->id(); 
+	my $len = $sseqobj->length();
+	my $new_id = "Ctg" . $cc . "_" . $len ."bp";
+	
+	unless (exists $frag_repeat{$sqid}) {
+	    
+	    $sseqobj->id($new_id);
+	    $asb07io->write_seq($sseqobj);
+	}
+	
+	if (exists $getrev{$sqid}) {
+	    
+	    my $revcomseq = $sseqobj->revcom();
+	    $revcomseq->id($new_id);
+	    $asb07io->write_seq($revcomseq);
+	}	
+	$cc++;
     }
-    
-    my @sspace02run = run( command => $sspace2cmd, verbose => $opt_V );
+
+    print STDERR "\n\t4.6.4- Rescaffolding the sequences with SSPACE-Long.\n";
+
+    ## To accelerate the SSPACE long it will run BlasR separately and then
+    ## Copy the file to $sspace2_out/intemediate_files/BLASR_results.txt
+
+    my $sspace2out = File::Spec->catfile($outdir, "06_sspacelong_out");
+
+    run_sspace_long(\%exepath, \%blasr_args, \%sspace_args, 
+		    $blasr_in, $assembly06, $sspace2out);
 
     ## Get the results
     my $preassembly07 = File::Spec->catfile($sspace2out, "scaffolds.fasta");
@@ -1210,16 +1216,19 @@ sub help {
   $0:
 
       OrganelleRef_PBA
-      Pipeline to assemble plastid genomes using PacBio                                               
+      Pipeline to assemble plastid genomes using PacBio                   
 
     Usage:
 
-      OrganelleRef_PBA [-h]  -i <input_pacbio> -r <fasta_reference> -o <output_dir> 
-                       [-t <input_type>] [-b <blasr_arguments>] 
-                       [-s <sprai_ec_options>] [-c <sprai_pbsm_options>] 
-                       [-x <fraction_for_scaffolding>] [-l <sspace_long_options>] 
-                       [-n <repeat_block_size>] [-m <coverage_ratio4repeats>] 
-		       [-V]
+      OrganelleRef_PBA [-h]  -i <input_pacbio> -r <fasta_reference> 
+                             -o <output_dir> 
+                             [-t <input_type>] [-b <blasr_arguments>] 
+                             [-s <sprai_ec_options>] [-c <sprai_pbsm_options>] 
+                             [-x <fraction_for_scaffolding>] 
+			     [-l <sspace_long_options>] 
+                             [-n <repeat_block_size>] 
+			     [-m <coverage_ratio4repeats>] 
+		             [-V]
 
     Description:
       
@@ -1263,19 +1272,19 @@ sub help {
  
     Flags:
 
-      -i <input_pacbio>           input PacBio subreads (mandatory)
-      -t <input_type>             input type (fasta or fastq; default=fastq)
-      -r <fasta_reference>        organelle reference genome, fasta format (mandatory)
-      -o <output_dir>             output directory (mandatory)
-      -b <blasr_arguments>        pass the blasr arguments as '-arg1=val1,-arg2=val2'
-      -s <sprai_ec_options>       passing sprai ec options as 'opt1=val1,opt2=val2'
-      -c <sprai_pbasm_options>    passing sprai pbasm options as 'opt1=val1,opt2=val2'
-      -x <complete_fraction>      fraction that decide for a new scaffolding (def. 1.0)
-      -l <sspace_long_options>    passing the SSPACE-Long options as 'opt1=val1...'
-      -n <repeat_block_size>      size of the block to detect repeats by cov (def. 1000)
-      -m <coverage_ratio4repeats> coverage ratio to define repetitive region (def. 1.6)    
-      -V <be_verbose>             be verbose and print the parsing status.
-      -h <help>                   print the help
+      -i <input_pacbio>     input PacBio subreads (mandatory)
+      -t <input_type>       input type (fasta or fastq; default=fastq)
+      -r <fasta_reference>  organelle reference genome, fasta format (mandatory)
+      -o <output_dir>       output directory (mandatory)
+      -b <blasr_arguments>  pass the blasr arguments as '-arg1=val1,-arg2=val2'
+      -s <sprai_ec_options> passing sprai ec options as 'opt1=val1,opt2=val2'
+      -c <sprai_pbasm_opts> passing sprai pbasm options as 'opt1=val1,opt2=val2'
+      -x <cfraction>        fraction that decide a new scaffolding (def. 1.0)
+      -l <sspace_long_opts> passing the SSPACE-Long options as 'opt1=val1...'
+      -n <repeat_block>     block size to detect repeats by cov (def. 1000)
+      -m <cov_rep_ratio>    cov. ratio to define repetitive region (def. 1.6)
+      -V <be_verbose>       be verbose and print the parsing status.
+      -h <help>             print the help
 
 
 EOF
@@ -1815,4 +1824,95 @@ sub get_breakpoints {
     }
 
     return \%breaks;
+}
+
+
+###############################################################################
+## Function to run SSPACE-Long
+## It will run BlasR and then SSPACE-Long
+## use run_sspace_long($exe_href, $blasr_href, $sspace_href, $blasr_in, 
+##                     $ctg_file, $sspace_out)
+###############################################################################
+
+sub run_sspace_long {
+    my $exe_href = shift;
+    my $blasr_arg_href = shift;
+    my $sspace_arg_href = shift;
+    my $blasr_in = shift;
+    my $ctg_file = shift;
+    my $sspace_out = shift;
+
+    my %exepath = %{$exe_href};
+    my %blasr_args = %{$blasr_arg_href};
+    my %sspace_args = %{$sspace_arg_href};
+
+    my $sspace_cmd = "perl $exepath{'SSPACE-LongRead.pl'} -c $ctg_file";
+    $sspace_cmd .= " -p $blasr_in";
+
+    ## Add the output
+    $sspace_cmd .= " -b $sspace_out";
+    
+    ## Add the option to do the BlasR alignment by its own
+    $sspace_cmd .= " -s 1";
+
+    my $sspace_int = File::Spec->catfile($sspace_out, "intermediate_files");
+    make_path($sspace_int);
+    
+    ## Because SSPACE uses a specific format such as 
+    ## >contig . $contigN . _size . $length it will format that
+
+    my $seqio_in = Bio::SeqIO->new( -file => $ctg_file, -format => "fasta");
+    my $formctg = File::Spec->catfile($sspace_int, "contigs.fa");
+    my $seqio_out = Bio::SeqIO->new( -file => ">$formctg", -format => "fasta");
+
+    my $c = 0;
+    while( my $seqobj = $seqio_in->next_seq() ) {
+    
+	my $len = $seqobj->length();
+	my $newid = "contig" . $c . "_size" . $len;
+	$seqobj->id($newid);
+	$seqio_out->write_seq($seqobj);
+	$c++;
+    }
+
+    ## Prepare to run BlasR
+
+    my @blasrSLcmd = ($exepath{'blasr'}, $blasr_in, $ctg_file);
+    
+    ## Overwrite the blasr_arg{-out}
+    $blasr_args{'-out'} = File::Spec->catfile($sspace_out, "preBLASR_out.txt");
+    
+    foreach my $blasr_k (sort keys %blasr_args) {
+
+	push @blasrSLcmd, $blasr_k;
+	if (defined $blasr_args{$blasr_k}) {
+	    
+	    push @blasrSLcmd, $blasr_args{$blasr_k};
+	}
+    }
+    
+    my @blasrSLrun = run( command => \@blasrSLcmd, verbose => $opt_V );
+
+    ## Filter the results for BLASR
+
+    my $fblasr = File::Spec->catfile($sspace_int, "BLASR_results.txt");
+    open my $bou_fh, '>', $fblasr;
+    open my $bin_fh, '<', $blasr_args{'-out'};
+    while(<$bin_fh>) {
+    
+	chomp($_);
+	my @fds = split(/\s+/, $_);
+	if ($fds[2] == 0 && $fds[3] == 0) {
+	
+	    print $bou_fh "$_\n";
+	}
+    }
+
+
+    foreach my $sspace_opt (sort keys %sspace_args) {
+    
+	$sspace_cmd .= " $sspace_opt $sspace_args{$sspace_opt};";
+    }
+    
+    my @sspace_run = run( command => $sspace_cmd, verbose => $opt_V );
 }

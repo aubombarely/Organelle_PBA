@@ -620,7 +620,8 @@ while(<$blasrout_fh>) {
 print STDERR "\t      $l reads ($total_len bp) will be selected\n";
 
 ## It will also produce the estimated size
-my $est_size = $sprai_ec{estimated_size} || $refsize; ## Chloroplast by default
+my $est_size = $sprai_ec{estimated_genome_size} || $refsize; 
+## Chloroplast by default
 my $est_depth_obj = Math::BigFloat->new($total_len/$est_size);
 my $est_depth = $est_depth_obj->bfround(0);
 print STDERR "\t      Estimated depth (reference based): $est_depth X.\n\n";
@@ -713,6 +714,7 @@ my $sprai_ec =  File::Spec->catfile($outdir, "02_Sprai_ec.spec");
 ## Overwrite the following options
 $sprai_ec{estimated_depth} = $est_depth;
 $sprai_ec{input_for_database} = $sprai_in;
+$sprai_ec{estimated_genome_size} = $est_size * 2; 
 
 create_sprai_ec_file($sprai_ec, \%exepath, \%sprai_ec);
 
@@ -1159,15 +1161,17 @@ else {
 	    
 	    $sseqobj->id($new_id);
 	    $asb07io->write_seq($sseqobj);
+	    $cc++;
 	}
 	
 	if (exists $getrev{$sqid}) {
 	    
 	    my $revcomseq = $sseqobj->revcom();
+	    $new_id .= "_RC";
 	    $revcomseq->id($new_id);
 	    $asb07io->write_seq($revcomseq);
+	    $cc++;
 	}	
-	$cc++;
     }
 
     print STDERR "\n\t4.6.4- Rescaffolding the sequences with SSPACE-Long.\n";
@@ -1367,8 +1371,8 @@ sub create_sprai_ec_file {
     my %ec_def = (
 	## No default value: input_for_database    => 'NA',
 	min_len_for_query     => 1000,
-	estimated_genome_size => 160000,  ##  Regular chloroplasts by default
-	estimated_depth       => 100,     ##  For now
+	estimated_genome_size => 1600000,  ##  X10 times chl size
+	estimated_depth       => 100,      ##  For now
 	pre_partition         => 2,
 	partition             => 12,
 	ca_path               => $ca_path."/",
@@ -1846,15 +1850,6 @@ sub run_sspace_long {
     my %blasr_args = %{$blasr_arg_href};
     my %sspace_args = %{$sspace_arg_href};
 
-    my $sspace_cmd = "perl $exepath{'SSPACE-LongRead.pl'} -c $ctg_file";
-    $sspace_cmd .= " -p $blasr_in";
-
-    ## Add the output
-    $sspace_cmd .= " -b $sspace_out";
-    
-    ## Add the option to do the BlasR alignment by its own
-    $sspace_cmd .= " -s 1";
-
     my $sspace_int = File::Spec->catfile($sspace_out, "intermediate_files");
     make_path($sspace_int);
     
@@ -1862,10 +1857,10 @@ sub run_sspace_long {
     ## >contig . $contigN . _size . $length it will format that
 
     my $seqio_in = Bio::SeqIO->new( -file => $ctg_file, -format => "fasta");
-    my $formctg = File::Spec->catfile($sspace_int, "contigs.fa");
+    my $formctg = File::Spec->catfile($sspace_out, "input_contigs.fa");
     my $seqio_out = Bio::SeqIO->new( -file => ">$formctg", -format => "fasta");
 
-    my $c = 0;
+    my $c = 1;
     while( my $seqobj = $seqio_in->next_seq() ) {
     
 	my $len = $seqobj->length();
@@ -1877,10 +1872,11 @@ sub run_sspace_long {
 
     ## Prepare to run BlasR
 
-    my @blasrSLcmd = ($exepath{'blasr'}, $blasr_in, $ctg_file);
+    my @blasrSLcmd = ($exepath{'blasr'}, $blasr_in, $formctg);
     
     ## Overwrite the blasr_arg{-out}
-    $blasr_args{'-out'} = File::Spec->catfile($sspace_out, "preBLASR_out.txt");
+    my $preblasr_out = File::Spec->catfile($sspace_out, "preBLASR_out.txt");
+    $blasr_args{'-out'} = $preblasr_out;
     
     foreach my $blasr_k (sort keys %blasr_args) {
 
@@ -1893,7 +1889,8 @@ sub run_sspace_long {
     
     my @blasrSLrun = run( command => \@blasrSLcmd, verbose => $opt_V );
 
-    ## Filter the results for BLASR
+    ## Filter the results for BLASR to get only the sense reads
+    ## to avoid multiple hits in the repeat
 
     my $fblasr = File::Spec->catfile($sspace_int, "BLASR_results.txt");
     open my $bou_fh, '>', $fblasr;
@@ -1908,6 +1905,16 @@ sub run_sspace_long {
 	}
     }
 
+    ## Prepare SSPACE
+
+    my $sspace_cmd = "perl $exepath{'SSPACE-LongRead.pl'} -c $formctg";
+    $sspace_cmd .= " -p $blasr_in";
+
+    ## Add the output
+    $sspace_cmd .= " -b $sspace_out";
+    
+    ## Add the option to use the BlasR alignment by its own
+    $sspace_cmd .= " -s 1";
 
     foreach my $sspace_opt (sort keys %sspace_args) {
     

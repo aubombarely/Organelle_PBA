@@ -607,8 +607,7 @@ while(<$blasrout_fh>) {
     ## BlasR output add an extra /0_\d+ at the end of the line
    
     my @id = split(/\//, $line[0]);
-    my $len = pop(@id);
-    $len =~ s/0_//;
+    my $len = $line[11];
     my $id = join("/", @id); 
 
     $selected_ids{$id} = $len;
@@ -1184,9 +1183,13 @@ else {
     run_sspace_long(\%exepath, \%blasr_args, \%sspace_args, 
 		    $blasr_in, $assembly06, $sspace2out);
 
+    ## An extra step to check circularity will polish the output
+
+    
+
     ## Get the results
     my $preassembly07 = File::Spec->catfile($sspace2out, "scaffolds.fasta");
-    my $assembly07 = File::Spec->catfile($outdir,"06_organelle_assembly06.fa");
+    my $assembly07 = File::Spec->catfile($outdir,"Organelle_final_assembly.fa");
 
     ## Copy to outside dir
     copy($preassembly07, $assembly07);

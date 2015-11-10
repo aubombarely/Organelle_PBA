@@ -1175,11 +1175,11 @@ else {
     ## It will compare the fragments using a self blast
     ## 1- Create the DB with makeblastdb
 	
-    my $mkblastdbcmd = "exepath{'makeblastdb'} -in $assembly05 -dbtype nucl";
+    my $mkblastdbcmd = "$exepath{'makeblastdb'} -in $assembly05 -dbtype nucl";
     my @mkblastdb01run = run( command => $mkblastdbcmd, verbose => $opt_V );
 
     ## 2- Now it will do the selfblast BlastN
-    my $selfbl01cmd = "exepath{'blastn'} -query $assembly05 -db $assembly05 ";
+    my $selfbl01cmd = "$exepath{'blastn'} -query $assembly05 -db $assembly05 ";
 	
     ## Create the outputname 
     my $selfblastout = File::Spec->catfile($outdir,"05_6_frag_selfblast.txt");
@@ -1234,15 +1234,26 @@ else {
     if (scalar(keys(%frag_repeat)) > 0) {
 	
 	print STDERR "\tRepeat found:\n";
-	foreach my $rep_id (sort keys %frag_repeat) {
+	foreach my $repid (sort keys %frag_repeat) {
 		
-	    my %rpstats = %{$frag_repeat{$rep_id}};
+	    my %rpstats = %{$frag_repeat{$repid}};
 	    
-	    print STDERR "\t\t$rep_id %IDENTITY=$rpstats{ide}";
-	    print STDERR " %COVERAGE=$rpstats{cov}";
-	    print STDERR " STRAND=$rpstats{str}";
-	    print STDERR " PAIRED_ID=$rpstats{pai}\n";
-	    $getrev{$rpstats{pai}} = 1;
+	    print STDERR "\t\t$repid\n\t\t\t%IDENTITY=$rpstats{ide}\n";
+	    print STDERR "\t\t\t%COVERAGE=$rpstats{cov}\n";
+	    print STDERR "\t\t\tSTRAND=$rpstats{str}\n";
+	    print STDERR "\t\t\tPAIRED_ID=$rpstats{pai}\n\n";
+	 
+	    ## Only add the revcom if it is fully covered. 
+	    if ($rpstats{cov} >= 100 && $rpstats{str} eq '-') {
+
+		$getrev{$rpstats{pai}} = 1;
+		print STDERR "$repid will be replaced by ";
+		print STDERR "revcom $rpstats{pai}\n\n";
+	    }
+	    else {
+	    
+		print STDERR "Repeat $repid will be keeped\n";
+	    }
 	}
     }
 
@@ -1274,15 +1285,36 @@ else {
 	my $sqid = $sseqobj->id(); 
 	my $len = $sseqobj->length();
 	my $new_id = "Ctg" . $cc . "_" . $len ."bp";
+	my $addregseq = 1;
+	my $addrevcom = 0;
+
+	if (exists $frag_repeat{$sqid}) {
 	
-	unless (exists $frag_repeat{$sqid}) {
+	    ## The fragment exists, so now it will need to check
+	    ## if it is fully covered.
+
+	    my $cov = $frag_repeat{$sqid}->{cov};
+	    if ($cov >= 100) {
+		
+		$addregseq = 0;	    
+	    }
+	}
+       
+	if (exists $getrev{$sqid}) {
+	
+	    $addrevcom = 1;
+	}
+
+	## Now print the output
+	
+	if ($addregseq == 1) {
 	    
 	    $sseqobj->id($new_id);
 	    $asb07io->write_seq($sseqobj);
 	    $cc++;
 	}
 	
-	if (exists $getrev{$sqid}) {
+	if ($addrevcom == 1) {
 	    
 	    my $revcomseq = $sseqobj->revcom();
 	    $new_id .= "_RC";

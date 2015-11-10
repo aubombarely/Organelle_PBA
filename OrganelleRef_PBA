@@ -14,6 +14,7 @@
                   [-s <sprai_ec_options>] [-c <sprai_pbsm_options>] 
                   [-x <fraction_for_scaffolding>] [-l <sspace_long_options>]
                   [-n <repeat_block_size>] [-m <coverage_ratio4repeats>]
+                  [-C]
 
 =head2 I<Flags:>
 
@@ -64,6 +65,10 @@ B<repeat_block_size>      size of the block to detect repeats by cov (def. 1000)
 
 B<coverage_ratio4repeats> coverage ratio to define repetitive region (def. 1.6)
 
+=item -C
+
+B<check_completeness>     check completeness after the circularation check
+
 =item -V
 
 B<be_verbose>             be verbose and print the parsing status.
@@ -94,11 +99,14 @@ B<help>                   print the help
  
  3- Rescaffolding of the contigs produced by Sprai with SSPACE-Long.
 
- 4- First mapping round with the assembly to find repetitive regions.
+ 4- Check circularity and origin, if both are positive it will evaluate
+    completeness (-C), and finish the script if it is complete (>98% coverage)
 
- 5- Repetitive region break based in the coverage and a self blast
+ 5- First mapping round with the assembly to find repetitive regions.
 
- 6- Second assembly round with the repetitive region.
+ 6- Repetitive region break based in the coverage and a self blast
+
+ 7- Second assembly round with the repetitive region.
 
  This program uses three different external programs:
  a- BlasR (for mapping).
@@ -143,10 +151,10 @@ use Bio::Tools::Run::StandAloneBlastPlus;
 use Math::BigFloat;
 
 our ($opt_i, $opt_t, $opt_o, $opt_r, $opt_b, $opt_s, $opt_c, $opt_x, $opt_l, 
-     $opt_n, $opt_m, $opt_V, $opt_h);
-getopts("i:t:o:r:b:s:c:x:l:n:m:Vh");
+     $opt_n, $opt_m, $opt_C, $opt_V, $opt_h);
+getopts("i:t:o:r:b:s:c:x:l:n:m:CVh");
 if (!$opt_i && !$opt_t && !$opt_o && !$opt_r && !$opt_b && !$opt_s && !$opt_x
-    && !$opt_l && !$opt_c && !$opt_n && !$opt_m && !$opt_V 
+    && !$opt_l && !$opt_c && !$opt_n && !$opt_m && !$opt_C && !$opt_V 
     && !$opt_h) {
     print "There are n\'t any tags. Print help\n\n";
     help();
@@ -889,9 +897,12 @@ print STDERR "\t4.1- Searching an origin based in the reference\n";
 my $oblastout = File::Spec->catfile($outdir,"04_1_origin_blast.txt");
 my ($origin, $str) = find_origin($assembly03, $orgref, \%exepath, $oblastout); 
 
+my $it_has_origin = 0;
+
 if ($origin =~ m/^\d+$/) {
 
     print STDERR "\t\tOrigin found at $origin\n\n";
+    $it_has_origin = 1;
 }
 else {
     
@@ -914,6 +925,9 @@ my @checkcirc01run = run( command => $checkcirc_cmd, verbose => $opt_V );
 
 ## By default define the assembly 04 as 03
 my $assembly04 = $assembly03;
+
+my $it_is_circular = 0;
+my $it_doesnt_have_Ns = 0;
 
 open my $checkcirc_fh, '<', $checkcirc_out;
 while(<$checkcirc_fh>) {
@@ -945,6 +959,7 @@ while(<$checkcirc_fh>) {
 	    $perc = $1;
 	}
 
+	$it_is_circular = 1;
 
         print STDERR "\tCircularity found: $p_st-$p_en matches ";
 	print STDERR "$e_st-$e_en ($perc %)\n";
@@ -988,6 +1003,15 @@ while(<$checkcirc_fh>) {
 		if ($str eq '-') {
 		    $newseqobj = $newseqobj->revcom();
 		}
+
+		## Before write it check if it has Ns
+
+		my $checkseq = $newseqobj->seq();
+		if ($checkseq !~ m/N/i) {
+		
+		    $it_doesnt_have_Ns = 1;
+		}
+
 		$asb05io->write_seq($newseqobj);
 	    }
 	    else {
@@ -1002,356 +1026,445 @@ while(<$checkcirc_fh>) {
     }
 }
 
+####################################################################
+## Evaluate completeness after circularity evaluation
+####################################################################
+##
+## It can happens that the reference is not complete so it will a 
+## option to evaluate the completeness of the assembly after the
+## removal of the circularity
+
+my $endscript = 0;
+if ($opt_C) {
+
+    print STDERR "\n\tOption -C Enabled. Checking completeness.\n";
+
+    ## Requirements:
+    ## 1- Circularity was found
+    ## 2- Origin was found
+    ## 3- It doesnt has Ns
+
+    if ($it_is_circular == 1 && $it_has_origin == 1 && $it_doesnt_have_Ns == 1){
+
+	## 4- Coverage reference >= 98%
+	## Probably it is difficult to find a full match with far
+	## species if they are used as reference, but with close
+	## species (e.g. mus vs rattus) is possible to reach >97%
+	## so let's keep.
+
+	## Run a new Blast with the final assembly
+
+	my $fblastout = File::Spec->catfile($outdir,"04_3_checkfinalblast.txt");
+	my $mkblastdbcmd = "$exepath{'makeblastdb'} -in $orgref -dbtype nucl";
+	my @mkblastdb02run = run( command => $mkblastdbcmd, verbose => $opt_V );
+	
+	my $bl02cmd = "$exepath{'blastn'} -query $assembly04 -db $orgref ";
+	$bl02cmd .= "-out $fblastout ";
+	$bl02cmd .= "-outfmt '6 std qlen slen' ";
+	my @bl02run = run( command => $bl02cmd, verbose => $opt_V );
+
+	my ($qcov, $scov) = (0, 0); 
+
+	open my $oblast_fh, '<', $fblastout;
+	while(<$oblast_fh>) {
+		
+	    chomp($_);
+	    my @bl_fields = split(/\t/, $_);
+	    my $align_len = $bl_fields[3];
+	    my $qlen = $bl_fields[12];
+	    my $slen = $bl_fields[13];
+	    
+	    $qcov = $align_len * 100 / $qlen;
+	    $scov = $align_len * 100 / $slen;
+	    print STDERR "\nTEST qcov=$qcov and scov=$scov\n";
+	}
+	
+	if ($qcov >= 98 && $scov >= 98) {
+	    
+	    ## Accept that it is finished
+	    
+	    print STDERR "\n\tAssembly meets the requirements to be";
+	    print STDERR " considered finished (-C Enabled).\n\n";
+	    
+	    my $finalfile = File::Spec->catfile($outdir,
+					    "Organelle_final_assembly.fasta");
+
+	    copy($assembly04, $finalfile);
+	    print STDERR "\n\tFINAL ASSEMBLY FILE: $finalfile\n";
+	    my @fi_seqstats = get_seqstats($finalfile, $refsize);
+	    print_seqstats("Final Assembly Results", \@fi_seqstats);
+	   
+	    $endscript = 1;	    
+	}
+	else {
+	
+	    print STDERR "\tReference coverage criteria doesnt meet.\n";
+	}
+    }
+    else {
+    
+	print STDERR "\tCircularity/Origin/Ns criteria doesnt meet.\n";
+    }
+}
+
 
 ####################################################################
 ## Evaluate repetitive regions through mapping
 ####################################################################
 
-print_header("5) Evaluating repetitive regions");
+if ($endscript == 0) {
 
-## To evaluate the repetitive region it will map back the
-## reads and check the coverage.
+    print_header("5) Evaluating repetitive regions");
 
-my $blasr2out = File::Spec->catfile($outdir, "05_1_BlasR_out.sam"); 
-$blasr_args{'-out'} = $blasr2out;
+    ## To evaluate the repetitive region it will map back the
+    ## reads and check the coverage.
 
-
-my @blasr2cmd = ($exepath{'blasr'}, $blasr_in, $assembly04);
-foreach my $blasr_k (sort keys %blasr_args) {
-
-    push @blasr2cmd, $blasr_k;
-    if (defined $blasr_args{$blasr_k}) {
-    
-	push @blasr2cmd, $blasr_args{$blasr_k};
-    }
-}
-
-## Additionally it will add --sam and the output
-
-push @blasr2cmd, "-sam";
-
-print STDERR "\t5.1- Running BlasR re-mapping.\n\n";
-
-my @blasr02run = run( command => \@blasr2cmd, verbose => $opt_V );
-
-## Once the blast is done, it will process the file
-## 1- Sam to Bam
-## 2- Bam sort
-
-my $bamout = File::Spec->catfile($outdir, "05_1_BlasR_out.bam");
-my $samtools01cmd = "$exepath{samtools} view -F4 -Sb -o $bamout $blasr2out";
-
-print STDERR "\t5.2- Running samtools view (Sam to Bam).\n\n";
-
-my @sam01run = run( command => $samtools01cmd, verbose => $opt_V );
-
-my $bamout_s = File::Spec->catfile($outdir, "05_2_BlasR_out");
-my $samtools02cmd = "$exepath{samtools} sort $bamout $bamout_s";
-
-print STDERR "\t5.3- Sorting bam file.\n\n";
-
-my @sam02run = run( command => $samtools02cmd, verbose => $opt_V );
-
-## Now it will calculate the coverage per position
-## This needs genome file such as <chromName><TAB><chromSize>
-
-my $gemsize = File::Spec->catfile($outdir, "05_3_assembly_size.txt");
-open my $gemfh, '>', $gemsize;
-print $gemfh "$seqstats02[3]\t$seqstats02[2]\n";
-
-## The chloroplast repeat usually appears like
-## 1- They have twice the coverage of the single region
-## 2- They present an usually incomplete hit with a selfblast
-
-## First, check coverage
-
-## And then, run bedtools genome cov
-
-print STDERR "\t5.4- Calculating coverage.\n\n";
-
-my $bedgc01cmd = "$exepath{bedtools} genomecov -d -ibam $bamout -g $gemsize";
-
-## It will redirect this into a file
-my $gcfile01 = File::Spec->catfile($outdir, "05_4_assembly_coverage.bed");
-$bedgc01cmd .= " > $gcfile01";
-
-my @bedtools01run = run( command => $bedgc01cmd, verbose => $opt_V );
-
-## If everything is right the mapping will give two types of coverage
-## for a chloroplast 1x and 2x for the repeat
-##
-## --+     +----+                             +--
-##   |     |    |                             |
-##   | 1X  | 2x |          1X                 |
-##   +-----+    +-----------------------------+
-##
-## For 1X and 2X will be an oscillation so to analyze this we will define
-## the region 1X as 1X +/- 0.5X (e.g: 10, 13, 7, 9, 12 ... will de defined
-## as 1X and 20, 18, 25 ... as 2X).
+    my $blasr2out = File::Spec->catfile($outdir, "05_1_BlasR_out.sam"); 
+    $blasr_args{'-out'} = $blasr2out;
 
 
-my $covstats_href = calculate_covblocks($gcfile01, $repeat_blocksize, $hlratio);
-my %covstats = %{$covstats_href};
+    my @blasr2cmd = ($exepath{'blasr'}, $blasr_in, $assembly04);
+    foreach my $blasr_k (sort keys %blasr_args) {
 
-## It will print cov stats
-print STDERR "\n\tMax. coverage:\t$covstats{c_max}\n";
-print STDERR "\tMax. coverage position:\t$covstats{p_max}\n";
-print STDERR "\tMin. coverage:\t$covstats{c_min}\n";
-print STDERR "\tMin. coverage position:\t$covstats{p_min}\n";
-print STDERR "\tTotal coverage sum:\t$covstats{total_cov}\n";
-print STDERR "\tTotal length analyzed:\t$covstats{total_len}\n\n";
-print STDERR "\tAverage coverage:\t$covstats{c_average}\n";
-print STDERR "\tLower limit coverage:\t$covstats{lower_limit}\n";
-print STDERR "\tUpper limit coverage:\t$covstats{upper_limit}\n\n";
-
-print STDERR "\t5.5- Getting the breaking points\n";
-
-## Now it will get the sequence break points based in the blocks 
-my $breakpoints_href = get_breakpoints($covstats{covdata});
-
-## If there is not breaking point (e.g. mitochondrial genome)
-## it doesn't need to go through this
-
-my %breaks = %{$breakpoints_href};
-my $n_breaks = scalar(keys %breaks) - 1;
-
-print STDERR "\t$n_breaks breaking points have been detected\n\n";
-
-if (scalar(keys %breaks) == 1) {
-
-    print STDERR "\n\tNo repeats breaking points detected.\n";
-
-    my $assembly07 = File::Spec->catfile($outdir,
-					 "Organelle_final_assembly.fasta");
-
-    ## Copy to final name
-    copy($assembly04, $assembly07);
-    print STDERR "\n\tFINAL ASSEMBLY FILE: $assembly07\n";
-    my @seqstats03 = get_seqstats($assembly07, $refsize);
-    print_seqstats("Final Assembly Results", \@seqstats03);
-}
-else {
-
-    ## It will divide the reads in the different sections
-    ## do a self blast to check the repeat
-    ## remove the smaller repetitive fragment
-    ## do the revcom
-    ## and rescaffold the four fragments.
-
-    print STDERR "\t5.6.1- Breaking the assembly.\n";
-    
-    my $asb04io = Bio::SeqIO->new( -file => "$assembly04", -type => 'fasta' );
-    my $assembly05 = File::Spec->catfile($outdir,"05_6_assembly03breaks.fasta");
-    my $asb05io = Bio::SeqIO->new( -file => ">$assembly05", -type => 'fasta' );
-
-    ## Additionally it will store the seqobjects into an array for
-    ## further comparisons
-    my @subseqs = ();
-
-    ## It should have just one sequence
-    my $c = 0;
-    while (my $wseqobj = $asb04io->next_seq()) {
-
-	my $pid = $wseqobj->id();
-	foreach my $break (sort {$a <=> $b} keys %breaks) {
-    
-	    my $st = $breaks{$break}->{start};
-	    my $en = $breaks{$break}->{end};
-
-	    print STDERR "\tGetting the subsequence $pid:$st..$en\n";
-	    my $subseq = $wseqobj->trunc($st, $en);
-	    my $newid = $subseq->id()."_".$st."_".$en;
-	    $subseq->id($newid);
-	    push @subseqs, $subseq;
+	push @blasr2cmd, $blasr_k;
+	if (defined $blasr_args{$blasr_k}) {
 	    
-	    $asb05io->write_seq($subseq);
-	    $c++;
+	    push @blasr2cmd, $blasr_args{$blasr_k};
 	}
     }
 
-    print STDERR "\t$assembly04 has been broken in $c subsequences.\n\n";
-    print STDERR "\t5.6.2- Comparing fragments.\n";
+    ## Additionally it will add --sam and the output
 
-    ## It will compare the fragments using a self blast
-    ## 1- Create the DB with makeblastdb
-	
-    my $mkblastdbcmd = "$exepath{'makeblastdb'} -in $assembly05 -dbtype nucl";
-    my @mkblastdb01run = run( command => $mkblastdbcmd, verbose => $opt_V );
+    push @blasr2cmd, "-sam";
 
-    ## 2- Now it will do the selfblast BlastN
-    my $selfbl01cmd = "$exepath{'blastn'} -query $assembly05 -db $assembly05 ";
-	
-    ## Create the outputname 
-    my $selfblastout = File::Spec->catfile($outdir,"05_6_frag_selfblast.txt");
-    $selfbl01cmd .= "-out $selfblastout ";
-	
-    ## Format
-    $selfbl01cmd .= "-outfmt '6 std qlen slen' ";
-	
-    ## Run the command
-    my @selfbl01run = run( command => $selfbl01cmd, verbose => $opt_V );
-	
-    ## Process the output
-    ## A repeat will be defined as a fragment of the sequence that 
-    ## match with other sequence with %id > 90% and %seq_l > 90%
+    print STDERR "\t5.1- Running BlasR re-mapping.\n\n";
 
-    open my $sb_fh, '<', $selfblastout;
-    my %frag_repeat = ();
+    my @blasr02run = run( command => \@blasr2cmd, verbose => $opt_V );
 
-    while(<$sb_fh>) {
-	    
-	chomp($_);
-	my @blast_fds = split(/\t/, $_);
-	    
-	## Ignore the selfblast
-	if ($blast_fds[0] ne $blast_fds[1]) {
-	    
-	    my $identity = $blast_fds[2];
-	    my $coverage = $blast_fds[3] * 100 / $blast_fds[12];
-	    my $strand = "+";
-	    if ($blast_fds[9] > $blast_fds[10]) {
-		
-		$strand = "-";
-	    }
-	    
-	    if ($identity >= 90 && $coverage >= 90) {
-		
-		$frag_repeat{$blast_fds[0]} = {
-		    ide => $identity,
-		    cov => $coverage,
-		    str => $strand,
-		    pai => $blast_fds[1]			    
-		};
-	    }	    
-	}
-    }
-	
-    ## Print message and select the reads
-    ## Get also the pair
-	
-    my %getrev = ();
-	
-    if (scalar(keys(%frag_repeat)) > 0) {
-	
-	print STDERR "\tRepeat found:\n";
-	foreach my $repid (sort keys %frag_repeat) {
-		
-	    my %rpstats = %{$frag_repeat{$repid}};
-	    
-	    print STDERR "\t\t$repid\n\t\t\t%IDENTITY=$rpstats{ide}\n";
-	    print STDERR "\t\t\t%COVERAGE=$rpstats{cov}\n";
-	    print STDERR "\t\t\tSTRAND=$rpstats{str}\n";
-	    print STDERR "\t\t\tPAIRED_ID=$rpstats{pai}\n\n";
-	 
-	    ## Only add the revcom if it is fully covered. 
-	    if ($rpstats{cov} >= 100 && $rpstats{str} eq '-') {
+    ## Once the blast is done, it will process the file
+    ## 1- Sam to Bam
+    ## 2- Bam sort
 
-		$getrev{$rpstats{pai}} = 1;
-		print STDERR "$repid will be replaced by ";
-		print STDERR "revcom $rpstats{pai}\n\n";
-	    }
-	    else {
-	    
-		print STDERR "Repeat $repid will be keeped\n";
-	    }
-	}
-    }
+    my $bamout = File::Spec->catfile($outdir, "05_1_BlasR_out.bam");
+    my $samtools01cmd = "$exepath{samtools} view -F4 -Sb -o $bamout $blasr2out";
 
-    ## If the repeat is broken into two pieces, it can happens that these pieces
-    ## can overlap and be bigger than the smaller repeat in which case it will
-    ## be more convenient to keep them
+    print STDERR "\t5.2- Running samtools view (Sam to Bam).\n\n";
+
+    my @sam01run = run( command => $samtools01cmd, verbose => $opt_V );
+
+    my $bamout_s = File::Spec->catfile($outdir, "05_2_BlasR_out");
+    my $samtools02cmd = "$exepath{samtools} sort $bamout $bamout_s";
+
+    print STDERR "\t5.3- Sorting bam file.\n\n";
+
+    my @sam02run = run( command => $samtools02cmd, verbose => $opt_V );
+    
+    ## Now it will calculate the coverage per position
+    ## This needs genome file such as <chromName><TAB><chromSize>
+
+    my $gemsize = File::Spec->catfile($outdir, "05_3_assembly_size.txt");
+    open my $gemfh, '>', $gemsize;
+    print $gemfh "$seqstats02[3]\t$seqstats02[2]\n";
+
+    ## The chloroplast repeat usually appears like
+    ## 1- They have twice the coverage of the single region
+    ## 2- They present an usually incomplete hit with a selfblast
+
+    ## First, check coverage
+
+    ## And then, run bedtools genome cov
+
+    print STDERR "\t5.4- Calculating coverage.\n\n";
+
+    my $bedexe = $exepath{bedtools};
+    my $bedgc01cmd = "$bedexe genomecov -d -ibam $bamout -g $gemsize";
+
+    ## It will redirect this into a file
+    my $gcfile01 = File::Spec->catfile($outdir, "05_4_assembly_coverage.bed");
+    $bedgc01cmd .= " > $gcfile01";
+
+    my @bedtools01run = run( command => $bedgc01cmd, verbose => $opt_V );
+
+    ## If everything is right the mapping will give two types of coverage
+    ## for a chloroplast 1x and 2x for the repeat
     ##
-    ##  ---+               +-----+   +---
-    ##     |               |     |   |
-    ##     |               |     |   |
-    ##     +---------------+     +---+
-    ##  R1 |R2             |R3   |R4 |R5
-    ## 
-    ## If it is the case it will keep both (R1-R5) and R3 and it won't
-    ## calculate the reverse and it will add just these sequences
+    ## --+     +----+                             +--
+    ##   |     |    |                             |
+    ##   | 1X  | 2x |          1X                 | 
+    ##   +-----+    +-----------------------------+
+    ##
+    ## For 1X and 2X will be an oscillation so to analyze this we will define
+    ## the region 1X as 1X +/- 0.5X (e.g: 10, 13, 7, 9, 12 ... will de defined
+    ## as 1X and 20, 18, 25 ... as 2X).
 
 
-    ## At this point the script it ready to produce the sequences that will
-    ## be rescaffolded
-	
-    print STDERR "\n\t5.6.3- Selecting the no-redundant sequence set\n";
-    my $asb06io = Bio::SeqIO->new(-file => "$assembly05", -type => 'fasta');
-    my $assembly06 = File::Spec->catfile($outdir,"05_6_assembly04breaks.fasta");
-    my $asb07io = Bio::SeqIO->new(-file => ">$assembly06",-type => 'fasta');
+    my $covstats_href = calculate_covblocks($gcfile01, $repeat_blocksize, 
+					    $hlratio);
+    my %covstats = %{$covstats_href};
 
-    my $cc = 1;
-    while (my $sseqobj = $asb06io->next_seq()) {
+    ## It will print cov stats
+    print STDERR "\n\tMax. coverage:\t$covstats{c_max}\n";
+    print STDERR "\tMax. coverage position:\t$covstats{p_max}\n";
+    print STDERR "\tMin. coverage:\t$covstats{c_min}\n";
+    print STDERR "\tMin. coverage position:\t$covstats{p_min}\n";
+    print STDERR "\tTotal coverage sum:\t$covstats{total_cov}\n";
+    print STDERR "\tTotal length analyzed:\t$covstats{total_len}\n\n";
+    print STDERR "\tAverage coverage:\t$covstats{c_average}\n";
+    print STDERR "\tLower limit coverage:\t$covstats{lower_limit}\n";
+    print STDERR "\tUpper limit coverage:\t$covstats{upper_limit}\n\n";
 
-	my $sqid = $sseqobj->id(); 
-	my $len = $sseqobj->length();
-	my $new_id = "Ctg" . $cc . "_" . $len ."bp";
-	my $addregseq = 1;
-	my $addrevcom = 0;
+    print STDERR "\t5.5- Getting the breaking points\n";
 
-	if (exists $frag_repeat{$sqid}) {
-	
-	    ## The fragment exists, so now it will need to check
-	    ## if it is fully covered.
+    ## Now it will get the sequence break points based in the blocks 
+    my $breakpoints_href = get_breakpoints($covstats{covdata});
 
-	    my $cov = $frag_repeat{$sqid}->{cov};
-	    if ($cov >= 100) {
+    ## If there is not breaking point (e.g. mitochondrial genome)
+    ## it doesn't need to go through this
+
+    my %breaks = %{$breakpoints_href};
+    my $n_breaks = scalar(keys %breaks) - 1;
+
+    print STDERR "\t$n_breaks breaking points have been detected\n\n";
+
+    if (scalar(keys %breaks) == 1) {
+
+	print STDERR "\n\tNo repeats breaking points detected.\n";
+
+	my $assembly07 = File::Spec->catfile($outdir,
+					     "Organelle_final_assembly.fasta");
+
+	## Copy to final name
+	copy($assembly04, $assembly07);
+	print STDERR "\n\tFINAL ASSEMBLY FILE: $assembly07\n";
+	my @seqstats03 = get_seqstats($assembly07, $refsize);
+	print_seqstats("Final Assembly Results", \@seqstats03);
+    }
+    else {
+
+        ## It will divide the reads in the different sections
+	## do a self blast to check the repeat
+	## remove the smaller repetitive fragment
+	## do the revcom
+	## and rescaffold the four fragments.
+
+	print STDERR "\t5.6.1- Breaking the assembly.\n";
+    
+	my $asb04io = Bio::SeqIO->new(-file => "$assembly04", -type => 'fasta');
+	my $assembly05 = File::Spec->catfile($outdir,
+					     "05_6_assembly03breaks.fasta");
+	my $asb05io = Bio::SeqIO->new(-file => ">$assembly05",-type => 'fasta');
+
+	## Additionally it will store the seqobjects into an array for
+	## further comparisons
+	my @subseqs = ();
+
+	## It should have just one sequence
+	my $c = 0;
+	while (my $wseqobj = $asb04io->next_seq()) {
+
+	    my $pid = $wseqobj->id();
+	    foreach my $break (sort {$a <=> $b} keys %breaks) {
+    
+		my $st = $breaks{$break}->{start};
+		my $en = $breaks{$break}->{end};
 		
-		$addregseq = 0;	    
+		print STDERR "\tGetting the subsequence $pid:$st..$en\n";
+		my $subseq = $wseqobj->trunc($st, $en);
+		my $newid = $subseq->id()."_".$st."_".$en;
+		$subseq->id($newid);
+		push @subseqs, $subseq;
+		
+		$asb05io->write_seq($subseq);
+		$c++;
 	    }
 	}
-       
-	if (exists $getrev{$sqid}) {
+
+	print STDERR "\t$assembly04 has been broken in $c subsequences.\n\n";
+	print STDERR "\t5.6.2- Comparing fragments.\n";
+
+	## It will compare the fragments using a self blast
+	## 1- Create the DB with makeblastdb
 	
-	    $addrevcom = 1;
+	my $mkbdb_exe = $exepath{'makeblastdb'};
+	my $mkblastdbcmd = "$mkbdb_exe -in $assembly05 -dbtype nucl";
+	my @mkblastdb01run = run( command => $mkblastdbcmd, verbose => $opt_V );
+
+	## 2- Now it will do the selfblast BlastN
+	my $blastexe = $exepath{'blastn'};
+	my $selfbl01cmd = "blastexe -query $assembly05 -db $assembly05 ";
+	
+	## Create the outputname 
+	my $selfblastout = File::Spec->catfile($outdir,
+					       "05_6_frag_selfblast.txt");
+	$selfbl01cmd .= "-out $selfblastout ";
+	
+	## Format
+	$selfbl01cmd .= "-outfmt '6 std qlen slen' ";
+	
+	## Run the command
+	my @selfbl01run = run( command => $selfbl01cmd, verbose => $opt_V );
+	
+	## Process the output
+	## A repeat will be defined as a fragment of the sequence that 
+	## match with other sequence with %id > 90% and %seq_l > 90%
+
+	open my $sb_fh, '<', $selfblastout;
+	my %frag_repeat = ();
+
+	while(<$sb_fh>) {
+	    
+	    chomp($_);
+	    my @blast_fds = split(/\t/, $_);
+	    
+	    ## Ignore the selfblast
+	    if ($blast_fds[0] ne $blast_fds[1]) {
+	    
+		my $identity = $blast_fds[2];
+		my $coverage = $blast_fds[3] * 100 / $blast_fds[12];
+		my $strand = "+";
+		if ($blast_fds[9] > $blast_fds[10]) {
+		    
+		    $strand = "-";
+		}
+	    
+		if ($identity >= 90 && $coverage >= 90) {
+		
+		    $frag_repeat{$blast_fds[0]} = {
+			ide => $identity,
+			cov => $coverage,
+			str => $strand,
+			pai => $blast_fds[1]			    
+		    };
+		}	    
+	    }
+	}
+	
+	## Print message and select the reads
+	## Get also the pair
+	
+	my %getrev = ();
+	
+	if (scalar(keys(%frag_repeat)) > 0) {
+	
+	    print STDERR "\tRepeat found:\n";
+	    foreach my $repid (sort keys %frag_repeat) {
+		
+		my %rpstats = %{$frag_repeat{$repid}};
+	    
+		print STDERR "\t\t$repid\n\t\t\t%IDENTITY=$rpstats{ide}\n";
+		print STDERR "\t\t\t%COVERAGE=$rpstats{cov}\n";
+		print STDERR "\t\t\tSTRAND=$rpstats{str}\n";
+		print STDERR "\t\t\tPAIRED_ID=$rpstats{pai}\n\n";
+	 
+		## Only add the revcom if it is fully covered. 
+		if ($rpstats{cov} >= 100 && $rpstats{str} eq '-') {
+		    
+		    $getrev{$rpstats{pai}} = 1;
+		    print STDERR "\t\t$repid will be replaced by ";
+		    print STDERR "revcom $rpstats{pai}\n\n";
+		}
+		else {
+	    
+		    print STDERR "\t\tRepeat $repid will be keeped\n\n";
+		}
+	    }
 	}
 
-	## Now print the output
+        ## If the repeat is broken into two pieces, it can happens that these 
+	## pieces can overlap and be bigger than the smaller repeat in which 
+        ## case it will be more convenient to keep them
+	##
+	##  ---+               +-----+   +---
+	##     |               |     |   |
+	##     |               |     |   |
+	##     +---------------+     +---+
+	##  R1 |R2             |R3   |R4 |R5
+	## 
+	## If it is the case it will keep both (R1-R5) and R3 and it won't
+	## calculate the reverse and it will add just these sequences
+
+
+	## At this point the script it ready to produce the sequences that will
+	## be rescaffolded
 	
-	if ($addregseq == 1) {
+	print STDERR "\n\t5.6.3- Selecting the no-redundant sequence set\n";
+	my $asb06io = Bio::SeqIO->new(-file => "$assembly05", -type => 'fasta');
+	my $assembly06 = File::Spec->catfile($outdir,
+					     "05_6_assembly04breaks.fasta");
+	my $asb07io = Bio::SeqIO->new(-file => ">$assembly06",-type => 'fasta');
+
+	my $cc = 1;
+	while (my $sseqobj = $asb06io->next_seq()) {
+
+	    my $sqid = $sseqobj->id(); 
+	    my $len = $sseqobj->length();
+	    my $new_id = "Ctg" . $cc . "_" . $len ."bp";
+	    my $addregseq = 1;
+	    my $addrevcom = 0;
+
+	    if (exists $frag_repeat{$sqid}) {
+		
+		## The fragment exists, so now it will need to check
+		## if it is fully covered.
+		
+		my $cov = $frag_repeat{$sqid}->{cov};
+		if ($cov >= 100) {
+		
+		    $addregseq = 0;	    
+		}
+	    }
 	    
-	    $sseqobj->id($new_id);
-	    $asb07io->write_seq($sseqobj);
-	    $cc++;
+	    if (exists $getrev{$sqid}) {
+		
+		$addrevcom = 1;
+	    }
+	    
+	    ## Now print the output
+	    
+	    if ($addregseq == 1) {
+	    
+		$sseqobj->id($new_id);
+		$asb07io->write_seq($sseqobj);
+		$cc++;
+	    }
+	    
+	    if ($addrevcom == 1) {
+	    
+		my $revcomseq = $sseqobj->revcom();
+		$new_id .= "_RC";
+		$revcomseq->id($new_id);
+		$asb07io->write_seq($revcomseq);
+		$cc++;
+	    }	
 	}
+
+	print STDERR "\n\t5.6.4- Rescaffolding the contigs with SSPACE-Long.\n";
+
+	## To accelerate the SSPACE long it will run BlasR separately and then
+	## Copy the file to $sspace2_out/intemediate_files/BLASR_results.txt
+
+	my $sspace2out = File::Spec->catfile($outdir, "05_6_sspacelong_out");
+
+	run_sspace_long(\%exepath, \%blasr_args, \%sspace_args, 
+			$blasr_in, $assembly06, $sspace2out);
+
+	## An extra step to check circularity will polish the output
 	
-	if ($addrevcom == 1) {
-	    
-	    my $revcomseq = $sseqobj->revcom();
-	    $new_id .= "_RC";
-	    $revcomseq->id($new_id);
-	    $asb07io->write_seq($revcomseq);
-	    $cc++;
-	}	
-    }
+	
 
-    print STDERR "\n\t5.6.4- Rescaffolding the sequences with SSPACE-Long.\n";
+	## Get the results
+	my $preassembly07 = File::Spec->catfile($sspace2out, "scaffolds.fasta");
+	my $assembly07 = File::Spec->catfile($outdir,
+					     "Organelle_final_assembly.fasta");
 
-    ## To accelerate the SSPACE long it will run BlasR separately and then
-    ## Copy the file to $sspace2_out/intemediate_files/BLASR_results.txt
-
-    my $sspace2out = File::Spec->catfile($outdir, "05_6_sspacelong_out");
-
-    run_sspace_long(\%exepath, \%blasr_args, \%sspace_args, 
-		    $blasr_in, $assembly06, $sspace2out);
-
-    ## An extra step to check circularity will polish the output
-
-    
-
-    ## Get the results
-    my $preassembly07 = File::Spec->catfile($sspace2out, "scaffolds.fasta");
-    my $assembly07 = File::Spec->catfile($outdir,
-					 "Organelle_final_assembly.fasta");
-
-    ## Copy to outside dir
-    copy($preassembly07, $assembly07);
-
-    print STDERR "\n\tFINAL ASSEMBLY FILE: $assembly07\n\n";
-    my @seqstats03 = get_seqstats($assembly07, $refsize);
-    print_seqstats("Assembly Step 3 Results", \@seqstats03);
-
-}	
-    
+	## Copy to outside dir
+	copy($preassembly07, $assembly07);
+	
+	print STDERR "\n\tFINAL ASSEMBLY FILE: $assembly07\n\n";
+	my @seqstats03 = get_seqstats($assembly07, $refsize);
+	print_seqstats("Assembly Step 3 Results", \@seqstats03);
+    }	
+}
 
 $date = `date`;
 chomp($date);
@@ -1387,48 +1500,49 @@ sub help {
 			     [-l <sspace_long_options>] 
                              [-n <repeat_block_size>] 
 			     [-m <coverage_ratio4repeats>] 
-		             [-V]
+		             [-C] [-V]
 
     Description:
       
-      This program assembles the PacBio reads into a organelle fasta sequence.
- 
-      Fasta (-t fasta) and Fastq (-t fastq, default) input can be used.
+     This program assembles the PacBio reads into a organelle fasta sequence. 
 
-      It works in several steps:
- 
-       1- First mapping round of the PacBio reads with the organelle reference.
- 
-       2- First assembly round of the mapped reads using Sprai.
- 
-          + Evaluate the assembly, if longest contig size >= reference size
-                                            
-          it will move to resolve the repeat (4). Otherwise, it will try to 
-          improve the assembly using SSPACE-Long and the whole dataset (3).
- 
-          + The completeness will be controled by -x <completeness_fraction>
- 
-          By default 1.0 is used.
-  
-       3- Rescaffolding of the contigs produced by Sprai with SSPACE-Long.
- 
-       4- First mapping round with the assembly to find repetitive regions.
- 
-       5- Repetitive region break based in the coverage and a self blast
- 
-       6- Second assembly round with the repetitive region.
+     Fasta (-t fasta) and Fastq (-t fastq, default) input can be used.
 
-       
+     It works in several steps:
+     
+      1- First mapping round of the PacBio reads with the organelle reference.
+
+      2- First assembly round of the mapped reads using Sprai.
+     
+       + Evaluate the assembly, if longest contig size >= reference size 
+         it will move to resolve the repeat (4). Otherwise, it will try to
+         improve the assembly using SSPACE-Long and the whole dataset (3).
+     
+       + The completeness will be controled by -x <completeness_fraction> 
+         By default 1.0 is used.  
+     
+      3- Rescaffolding of the contigs produced by Sprai with SSPACE-Long.
+     
+      4- Check circularity and origin, if both are positive it will evaluate
+         completeness (-C), and finish the script if it is complete 
+	 (>98% coverage)
+     
+      5- First mapping round with the assembly to find repetitive regions.
+     
+      6- Repetitive region break based in the coverage and a self blast
+     
+      7- Second assembly round with the repetitive region.
+     
      This program uses three different external programs:
-
-         a- BlasR (for mapping).        
-         b- samtools (to manipulate sam).
-         c- Blast, Sprai and WGS-Assembler (for assembly).
-         d- SSPACE-Long for rescaffolding. 
-         e- Bedtools to calculate coverage.
-
-      Optionally it can use seqtk to speed up the Fastq to Fasta conversion   
-      and the Fastq read selection.         
+     
+      a- BlasR (for mapping).
+      b- samtools (to manipulate sam).
+      c- Blast, Sprai and WGS-Assembler (for assembly).
+      d- SSPACE-Long for rescaffolding.
+      e- Bedtools to calculate coverage    
+ 
+     Optionally it can use seqtk to speed up the Fastq to Fasta conversion
+     and the Fastq read selection.
  
     Flags:
 
@@ -1443,6 +1557,7 @@ sub help {
       -l <sspace_long_opts> passing the SSPACE-Long options as 'opt1=val1...'
       -n <repeat_block>     block size to detect repeats by cov (def. 1000)
       -m <cov_rep_ratio>    cov. ratio to define repetitive region (def. 1.6)
+      -C <check_complet>    check completeness after the check_circular
       -V <be_verbose>       be verbose and print the parsing status.
       -h <help>             print the help
 

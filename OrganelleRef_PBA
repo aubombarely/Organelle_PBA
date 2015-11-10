@@ -12,7 +12,7 @@
  OrganelleRef_PBA [-h]  -i <input_pacbio> -r <fasta_reference> -o <output_dir> 
                   [-t <input_type>] [-b <blasr_arguments>] 
                   [-s <sprai_ec_options>] [-c <sprai_pbsm_options>] 
-                  [-x <fraction_for_scaffolding>] [-l <sspace_long_options>] 
+                  [-x <fraction_for_scaffolding>] [-l <sspace_long_options>]
                   [-n <repeat_block_size>] [-m <coverage_ratio4repeats>]
 
 =head2 I<Flags:>
@@ -146,7 +146,8 @@ our ($opt_i, $opt_t, $opt_o, $opt_r, $opt_b, $opt_s, $opt_c, $opt_x, $opt_l,
      $opt_n, $opt_m, $opt_V, $opt_h);
 getopts("i:t:o:r:b:s:c:x:l:n:m:Vh");
 if (!$opt_i && !$opt_t && !$opt_o && !$opt_r && !$opt_b && !$opt_s && !$opt_x
-    && !$opt_l && !$opt_c && !$opt_n && !$opt_m && !$opt_V && !$opt_h) {
+    && !$opt_l && !$opt_c && !$opt_n && !$opt_m && !$opt_V 
+    && !$opt_h) {
     print "There are n\'t any tags. Print help\n\n";
     help();
 }
@@ -512,7 +513,7 @@ my $fastool_path = can_run('seqtk');
 
 if ($intype eq 'fastq') {
 
-    $blasr_in = File::Spec->catfile($outdir, "01_BlasR_in.fasta");    
+    $blasr_in = File::Spec->catfile($outdir, "01_1_BlasR_in.fasta");    
     
     if ($fastool_path) {
 
@@ -554,7 +555,7 @@ $seqcounter = $seqcount;
 
 ## It will overwrite the out
 
-my $blasr_out = File::Spec->catfile($outdir, "01_BlasR_out.txt"); 
+my $blasr_out = File::Spec->catfile($outdir, "01_2_BlasR_out.txt"); 
 if (exists $blasr_args{-out}) {
 
     warn("WARNING: BlasR out will be rewrite to $blasr_out\n");
@@ -589,9 +590,18 @@ my @blasr01run = run( command => \@blasr_cmd, verbose => $opt_V );
 ## regular BlasR output and use it to get the sequences from the
 ## fastq file.
 
+## Check that there is a BlasR out
+
+unless (-s $blasr_out) {
+
+    my $msg = "No BlasR output was created.";
+    $msg .= "Please check the input and the running parameters.\n";
+    die($msg);
+}
+
 print STDERR "\t1.3- Processing the BlasR output.\n";
 
-my $selids_file = File::Spec->catfile($outdir, "01_BlasR_hit_ids.txt");
+my $selids_file = File::Spec->catfile($outdir, "01_3_BlasR_hit_ids.txt");
 
 my $l = 0;
 my %selected_ids = ();
@@ -608,6 +618,7 @@ while(<$blasrout_fh>) {
    
     my @id = split(/\//, $line[0]);
     my $len = $line[11];
+    pop(@id);
     my $id = join("/", @id); 
 
     $selected_ids{$id} = $len;
@@ -632,11 +643,11 @@ print STDERR "\t1.4- Selecting reads from the $intype file\n";
 ##  + seqtk doesn't care about input type
 ##  + Bioperl will use type=$intype
 
-my $sprai_in = File::Spec->catfile($outdir, "02_Sprai_in.fq"); 
+my $sprai_in = File::Spec->catfile($outdir, "02_0_Sprai_in.fastq"); 
 
 if ($intype eq 'fasta') {
 
-    $sprai_in = File::Spec->catfile($outdir, "02_Sprai_in.fa"); 
+    $sprai_in = File::Spec->catfile($outdir, "02_0_Sprai_in.fasta"); 
 } 
 
 if ($fastool_path) {
@@ -673,7 +684,7 @@ if ($intype eq 'fasta') {
 
     print STDERR "\t1.5- Changing format from fasta to fastq for Sprai\n";
 
-    my $sprai_alt = File::Spec->catfile($outdir, "02_Sprai_in.fq"); 
+    my $sprai_alt = File::Spec->catfile($outdir, "02_0_Sprai_in.fastq"); 
     my $fa2fq_cmd = "$exepath{'fa2fq.pl'} $sprai_in > $sprai_alt";
 
     my @fa2fq01run = run( command => $fa2fq_cmd, verbose => $opt_V );
@@ -708,7 +719,7 @@ mkdir($sprai_outdir);
 print STDERR "\t2.1- Creating the ec.spec file for Sprai.\n";
 
 ## First, build the ec.spec file
-my $sprai_ec =  File::Spec->catfile($outdir, "02_Sprai_ec.spec"); 
+my $sprai_ec =  File::Spec->catfile($outdir, "02_1_Sprai_ec.spec"); 
 
 ## Overwrite the following options
 $sprai_ec{estimated_depth} = $est_depth;
@@ -721,11 +732,11 @@ create_sprai_ec_file($sprai_ec, \%exepath, \%sprai_ec);
 
 print STDERR "\n\t2.2- Creating the pbasm.spec file for Sprai.\n";
 
-my $sprai_pb =  File::Spec->catfile($outdir, "02_Sprai_pbasm.spec"); 
+my $sprai_pb =  File::Spec->catfile($outdir, "02_1_Sprai_pbasm.spec"); 
 
 create_ca_pbasm_file($sprai_pb, \%sprai_pbasm);
 
-my $sprai_log =  File::Spec->catfile($outdir, "02_Sprai_log.txt");
+my $sprai_log =  File::Spec->catfile($outdir, "02_1_Sprai_log.txt");
 
 ## Build the command
 
@@ -737,7 +748,7 @@ my @sprai01run = run( command => $spraicmd, verbose => $opt_V );
 
 ## Once the program is done, it will move the outdir
 
-my $sprai_outdir2 = File::Spec->catfile($outdir, "02_".$sprai_outdir);
+my $sprai_outdir2 = File::Spec->catfile($outdir, "02_1_".$sprai_outdir);
 move($sprai_outdir, $sprai_outdir2);
 
 print STDERR "\n\t2.3- Analyzing the results\n";
@@ -764,7 +775,7 @@ while( my $file = readdir($sprai_dh)) {
 my $sprai_scf_fp = File::Spec->catfile($sprai_finaldir, $sprai_scf);
 print STDERR "\tScaffold output file: $sprai_scf_fp\n";
 
-my $assembly01 = File::Spec->catfile($outdir, "03_organelle_assembly01.fa");
+my $assembly01 = File::Spec->catfile($outdir,"02_3_organelle_assembly01.fasta");
 
 copy($sprai_scf_fp, $assembly01);
 
@@ -807,14 +818,14 @@ if ($seqstats01[5] <= $asmfrc) {
 
     print STDERR "\t3.1- Running SSPACE-Long\n";
 
-    my $sspace_out = File::Spec->catfile($outdir, "03_sspacelong_out");
+    my $sspace_out = File::Spec->catfile($outdir, "03_1_sspacelong_out");
 
     run_sspace_long(\%exepath, \%blasr_args, \%sspace_args, 
 		    $blasr_in, $assembly01, $sspace_out);
 
     ## Get the results
     my $preassembly02 = File::Spec->catfile($sspace_out, "scaffolds.fasta");
-    $assembly02 = File::Spec->catfile($outdir,"04_organelle_assembly02.fa");
+    $assembly02 = File::Spec->catfile($outdir,"03_1_organelle_assembly.fasta");
 
     ## Copy to outside dir
     copy($preassembly02, $assembly02);
@@ -835,7 +846,7 @@ print_seqstats("Assembly Step 2 Results", \@seqstats02);
 print STDERR "\t3.2- Selecting the longest sequence ($seqstats02[3])\n";
 
 my $asb02io = Bio::SeqIO->new( -file => $assembly02, -type => 'fasta' );
-my $assembly03 = File::Spec->catfile($outdir,"04_organelle_assembly03.fa");
+my $assembly03 = File::Spec->catfile($outdir,"03_2_organelle_assembly.fasta");
 my $asb03io = Bio::SeqIO->new( -file => ">$assembly03", -type => 'fasta' );
 
 while( my $seqobj02 = $asb02io->next_seq() ) {
@@ -847,22 +858,51 @@ while( my $seqobj02 = $asb02io->next_seq() ) {
     }
 }
 
-print_header("4) Evaluating repetitive regions");
+##################################################################
+## Parameters to decide if the assembly is done
+## 1- Size of the longest contig compared with the reference 
+## 2- Circularity
+## 3- For chloroplast it should have LSR-IRa-SSR-IRb
+## Sometimes IR could be fragmented and the assembly will be:
+##  /IRb-LSR-IRa-SSR-IRb/
+##################################################################
 
 
 ##################################################################
 ## Check for circularity
 ##################################################################
+## It will also orientate the genome based in the reference
+## 
 
-print STDERR "\t4.1- Checking circularity\n";
+print_header("4) Evaluating repetitive regions");
+
+print STDERR "\t4.1- Searching an origin based in the reference\n";
+
+## To do it, it will blast the sequence to find a match 
+
+my $oblastout = File::Spec->catfile($outdir,"04_1_origin_blast.txt");
+my ($origin, $str) = find_origin($assembly03, $orgref, \%exepath, $oblastout); 
+
+if ($origin =~ m/^\d+$/) {
+
+    print STDERR "\t\tOrigin found at $origin\n\n";
+}
+else {
+    
+    print STDERR "\t\tNo Origin was found using reference.\n\n";
+}
+
+
+print STDERR "\t4.2- Checking circularity\n";
 
 ## It will use the check circularity script;
 ## It will produce the output as stdout, so it will redirect the
 ## the output into a file
 
-my $temp_cc = File::Spec->catfile($outdir, "04_checkcirc_tempdir");
-my $checkcirc_out = File::Spec->catfile($outdir, "04_checkcirc_out.txt");
-my $checkcirc_cmd = "check_circularity.pl $assembly03 $temp_cc --min_overlap_len 100 --force > $checkcirc_out";
+my $temp_cc = File::Spec->catfile($outdir, "04_2_checkcirc_tempdir");
+my $checkcirc_out = File::Spec->catfile($outdir, "04_2_checkcirc_out.txt");
+my $checkcirc_cmd = "check_circularity.pl $assembly03 $temp_cc";
+$checkcirc_cmd .= " --min_overlap_len 100 --force > $checkcirc_out";
 my @checkcirc01run = run( command => $checkcirc_cmd, verbose => $opt_V );
 
 
@@ -872,31 +912,83 @@ my $assembly04 = $assembly03;
 open my $checkcirc_fh, '<', $checkcirc_out;
 while(<$checkcirc_fh>) {
 
-    chomp($_); 
-    if ($_ =~ m/.+?\s+circular\s+\[(\d+)\-(\d+)\]\s+\w+\s+\[(\d+)\-(\d+)\]\s+\w+\s+(.+)\%\s+\w+/) {
+    chomp($_);
+    ## It will break the line based in spaces
+    ## Two options
+    ## A- ID<space>linear
+    ## B- ID<space>circular<space>[i_start-i_end]<space>matches<space>
+    ##    [f_start-f_end]<space>with<space>Percentage%<space>identity
+    
+    my @circout = split(/\s+/, $_); 
+    
+    if ($circout[1] =~ m/circular/) {
 
-        my $p_st = $1;
-        my $p_en = $2;
-        my $e_st = $3;
-        my $e_en = $4;
-        my $perc = $5;
-        print STDERR "\tCircularity found: $p_st-$p_en matches $e_st-$e_en ($perc %)\n";
+        my ($p_st, $p_en, $e_st, $e_en, $perc);
+	if ($circout[2] =~ m/^\[(\d+)\-(\d+)\]$/) {
+	
+	    $p_st = $1;
+	    $p_en = $2; 
+	}
+	if ($circout[4] =~ m/^\[(\d+)\-(\d+)\]$/) {
+	
+	    $e_st = $1;
+	    $e_en = $2; 
+	}
+	if ($circout[6] =~ m/^(.+)%$/) {
+	
+	    $perc = $1;
+	}
 
-        ## It will remove the repeat
-        my $asb04io = Bio::SeqIO->new( -file => "$assembly03", -type => 'fasta' );
-        $assembly04 = File::Spec->catfile($outdir,"04_assembly04_no_circ.fa");
-        my $asb05io = Bio::SeqIO->new( -file => ">$assembly04", -type => 'fasta' );
-	print STDERR "\tRemoving redundancy produced by circularity\n\n";
+
+        print STDERR "\tCircularity found: $p_st-$p_en matches ";
+	print STDERR "$e_st-$e_en ($perc %)\n";
+
+        ## With the circularity found, it will break the sequence and redo it
+	## based in the circularity and the origin
+	## 1    2                 3                          4   5
+	## XXXXXX-----------------O--------------------------XXXXX
+	
+        my $asb04io = Bio::SeqIO->new(-file => "$assembly03", -type => 'fasta');
+        $assembly04 = File::Spec->catfile($outdir,"04_2_assembly_nocirc.fasta");
+        my $asb05io = Bio::SeqIO->new(-file => ">$assembly04",-type => 'fasta');
+	
+	print STDERR "\tRemoving redundancy from circularity\n\n";
 
         while (my $wseqobj = $asb04io->next_seq()) {
 
-	    my $c_end = $e_st - 1;
-            my $subseq = $wseqobj->trunc(1, $c_end);
-            my $newid = $subseq->id()."_1_".$c_end;
-            $subseq->id($newid);
+	    ## First get the truncated sequence without the overlap
+	    ##
+	    ## 1    2                 3                         4   
+	    ## XXXXXX-----------------O--------------------------
 
-            $asb05io->write_seq($subseq);
-        }
+	    my $c_end = $e_st - 1;
+            my $subseq01 = $wseqobj->trunc(1, $c_end);
+            my $newid = $subseq01->id()."_1_".$c_end;
+            $subseq01->id($newid);
+
+	    ## Second, if it has an origin, set up
+
+	    if ($origin =~ m/^\d+$/) {
+	    
+		my $subseq02obj = $subseq01->trunc(1, $origin - 1);
+		my $end = $subseq01->length();
+		my $subseq03obj = $subseq01->trunc($origin, $end);
+		my $mergeseq = $subseq03obj->seq() . $subseq02obj->seq();
+
+		$newid =  $subseq01->id()."_NewOri_1_".$c_end;
+		my $newseqobj = Bio::PrimarySeq->new( 
+		    -seq => $mergeseq, -id => $newid );
+		
+		if ($str eq '-') {
+		    $newseqobj = $newseqobj->revcom();
+		}
+		$asb05io->write_seq($newseqobj);
+	    }
+	    else {
+		
+		$asb05io->write_seq($subseq01);
+	    }
+	}
     }
     elsif ($checkcirc_out =~ m/linear/) {
 
@@ -909,10 +1001,12 @@ while(<$checkcirc_fh>) {
 ## Evaluate repetitive regions through mapping
 ####################################################################
 
+print_header("5) Evaluating repetitive regions");
+
 ## To evaluate the repetitive region it will map back the
 ## reads and check the coverage.
 
-my $blasr2out = File::Spec->catfile($outdir, "04_BlasR_out.sam"); 
+my $blasr2out = File::Spec->catfile($outdir, "05_1_BlasR_out.sam"); 
 $blasr_args{'-out'} = $blasr2out;
 
 
@@ -930,7 +1024,7 @@ foreach my $blasr_k (sort keys %blasr_args) {
 
 push @blasr2cmd, "-sam";
 
-print STDERR "\t4.2- Running BlasR re-mapping.\n\n";
+print STDERR "\t5.1- Running BlasR re-mapping.\n\n";
 
 my @blasr02run = run( command => \@blasr2cmd, verbose => $opt_V );
 
@@ -938,24 +1032,24 @@ my @blasr02run = run( command => \@blasr2cmd, verbose => $opt_V );
 ## 1- Sam to Bam
 ## 2- Bam sort
 
-my $bamout = File::Spec->catfile($outdir, "04_BlasR_out.bam");
+my $bamout = File::Spec->catfile($outdir, "05_1_BlasR_out.bam");
 my $samtools01cmd = "$exepath{samtools} view -F4 -Sb -o $bamout $blasr2out";
 
-print STDERR "\t4.3- Running samtools view (Sam to Bam).\n\n";
+print STDERR "\t5.2- Running samtools view (Sam to Bam).\n\n";
 
 my @sam01run = run( command => $samtools01cmd, verbose => $opt_V );
 
-my $bamout_s = File::Spec->catfile($outdir, "04_BlasR_out");
+my $bamout_s = File::Spec->catfile($outdir, "05_2_BlasR_out");
 my $samtools02cmd = "$exepath{samtools} sort $bamout $bamout_s";
 
-print STDERR "\t4.4- Sorting bam file.\n\n";
+print STDERR "\t5.3- Sorting bam file.\n\n";
 
 my @sam02run = run( command => $samtools02cmd, verbose => $opt_V );
 
 ## Now it will calculate the coverage per position
 ## This needs genome file such as <chromName><TAB><chromSize>
 
-my $gemsize = File::Spec->catfile($outdir, "04_assembly03_size.txt");
+my $gemsize = File::Spec->catfile($outdir, "05_3_assembly_size.txt");
 open my $gemfh, '>', $gemsize;
 print $gemfh "$seqstats02[3]\t$seqstats02[2]\n";
 
@@ -967,12 +1061,12 @@ print $gemfh "$seqstats02[3]\t$seqstats02[2]\n";
 
 ## And then, run bedtools genome cov
 
-print STDERR "\t4.5- Calculating coverage.\n\n";
+print STDERR "\t5.4- Calculating coverage.\n\n";
 
 my $bedgc01cmd = "$exepath{bedtools} genomecov -d -ibam $bamout -g $gemsize";
 
 ## It will redirect this into a file
-my $gcfile01 = File::Spec->catfile($outdir, "04_assembly_coverage.bed");
+my $gcfile01 = File::Spec->catfile($outdir, "05_4_assembly_coverage.bed");
 $bedgc01cmd .= " > $gcfile01";
 
 my @bedtools01run = run( command => $bedgc01cmd, verbose => $opt_V );
@@ -1004,7 +1098,7 @@ print STDERR "\tAverage coverage:\t$covstats{c_average}\n";
 print STDERR "\tLower limit coverage:\t$covstats{lower_limit}\n";
 print STDERR "\tUpper limit coverage:\t$covstats{upper_limit}\n\n";
 
-print STDERR "\t4.6- Getting the breaking points\n";
+print STDERR "\t5.5- Getting the breaking points\n";
 
 ## Now it will get the sequence break points based in the blocks 
 my $breakpoints_href = get_breakpoints($covstats{covdata});
@@ -1020,8 +1114,14 @@ print STDERR "\t$n_breaks breaking points have been detected\n\n";
 if (scalar(keys %breaks) == 1) {
 
     print STDERR "\n\tNo repeats breaking points detected.\n";
-    print STDERR "\n\tFINAL ASSEMBLY FILE: $assembly04\n";
-    my @seqstats03 = get_seqstats($assembly04, $refsize);
+
+    my $assembly07 = File::Spec->catfile($outdir,
+					 "Organelle_final_assembly.fasta");
+
+    ## Copy to final name
+    copy($assembly04, $assembly07);
+    print STDERR "\n\tFINAL ASSEMBLY FILE: $assembly07\n";
+    my @seqstats03 = get_seqstats($assembly07, $refsize);
     print_seqstats("Final Assembly Results", \@seqstats03);
 }
 else {
@@ -1035,14 +1135,14 @@ else {
     print STDERR "\t4.6.1- Breaking the assembly.\n";
     
     my $asb04io = Bio::SeqIO->new( -file => "$assembly04", -type => 'fasta' );
-    my $assembly05 = File::Spec->catfile($outdir,"05_assembly03breaks.fa");
+    my $assembly05 = File::Spec->catfile($outdir,"05_assembly03breaks.fasta");
     my $asb05io = Bio::SeqIO->new( -file => ">$assembly05", -type => 'fasta' );
 
     ## Additionally it will store the seqobjects into an array for
     ## further comparisons
     my @subseqs = ();
 
-    ## Its should have just one sequence
+    ## It should have just one sequence
     my $c = 0;
     while (my $wseqobj = $asb04io->next_seq()) {
 
@@ -1069,11 +1169,11 @@ else {
     ## It will compare the fragments using a self blast
     ## 1- Create the DB with makeblastdb
 	
-    my $mkblastdbcmd = "makeblastdb -in $assembly05 -dbtype nucl";
+    my $mkblastdbcmd = "exepath{'makeblastdb'} -in $assembly05 -dbtype nucl";
     my @mkblastdb01run = run( command => $mkblastdbcmd, verbose => $opt_V );
 
     ## 2- Now it will do the selfblast BlastN
-    my $selfbl01cmd = "blastn -query $assembly05 -db $assembly05 ";
+    my $selfbl01cmd = "exepath{'blastn'} -query $assembly05 -db $assembly05 ";
 	
     ## Create the outputname 
     my $selfblastout = File::Spec->catfile($outdir,"05_frag_selfblast.txt");
@@ -1139,14 +1239,27 @@ else {
 	    $getrev{$rpstats{pai}} = 1;
 	}
     }
-   
+
+    ## If the repeat is broken into two pieces, it can happens that these pieces
+    ## can overlap and be bigger than the smaller repeat in which case it will
+    ## be more convenient to keep them
+    ##
+    ##  ---+               +-----+   +---
+    ##     |               |     |   |
+    ##     |               |     |   |
+    ##     +---------------+     +---+
+    ##  R1 |R2             |R3   |R4 |R5
+    ## 
+    ## If it is the case it will keep both (R1-R5) and R3 and it won't
+    ## calculate the reverse and it will add just these sequences
+
 
     ## At this point the script it ready to produce the sequences that will
     ## be rescaffolded
 	
     print STDERR "\n\t4.6.3- Selecting the no-redundant sequence set\n";
     my $asb06io = Bio::SeqIO->new(-file => "$assembly05", -type => 'fasta');
-    my $assembly06 = File::Spec->catfile($outdir,"06_assembly04breaks.fa");
+    my $assembly06 = File::Spec->catfile($outdir,"06_assembly04breaks.fasta");
     my $asb07io = Bio::SeqIO->new(-file => ">$assembly06",-type => 'fasta');
 
     my $cc = 1;
@@ -1189,7 +1302,8 @@ else {
 
     ## Get the results
     my $preassembly07 = File::Spec->catfile($sspace2out, "scaffolds.fasta");
-    my $assembly07 = File::Spec->catfile($outdir,"Organelle_final_assembly.fa");
+    my $assembly07 = File::Spec->catfile($outdir,
+					 "Organelle_final_assembly.fasta");
 
     ## Copy to outside dir
     copy($preassembly07, $assembly07);
@@ -1265,6 +1379,7 @@ sub help {
        5- Repetitive region break based in the coverage and a self blast
  
        6- Second assembly round with the repetitive region.
+
        
      This program uses three different external programs:
 
@@ -1654,8 +1769,9 @@ sub calculate_covblocks {
     
 	    $a = 0;
 	    $b++;
-	    push @blocks, [];
+	    push @blocks, [$cov];
 	}
+	
 
 	## Get the other stats
 	if ($cov >= $c_max) {
@@ -1770,16 +1886,16 @@ sub calculate_covblocks {
 		push @bcov, $low_average;
 	    }
 	}
-	elsif ($l_avg > $average) {
+	else {
 
 	    foreach my $c (@{$bl_aref}) {
 		push @bcov, $high_average;
 	    }
 	}
     }
-
-    $data{covdata} = \@bcov;
     
+    $data{covdata} = \@bcov;
+
     return \%data;
 }
 
@@ -1925,4 +2041,60 @@ sub run_sspace_long {
     }
     
     my @sspace_run = run( command => $sspace_cmd, verbose => $opt_V );
+}
+
+
+###############################################################################
+## Function find_origin
+## It will run a blast with the reference to find the origin
+###############################################################################
+## Remember that makeblastdb and blastn should be in the path
+
+sub find_origin {
+    my $query = shift;
+    my $subject = shift;
+    my $exepath_href = shift;
+    my $outfile = shift;
+
+    my %exepath = %{$exepath_href};
+
+    my $mkblastdbcmd = "$exepath{'makeblastdb'} -in $subject -dbtype nucl";
+    my @mkblastdb01run = run( command => $mkblastdbcmd, verbose => $opt_V );
+
+    ## 2- Now it will do the selfblast BlastN
+    my $bl01cmd = "$exepath{'blastn'} -query $query -db $subject ";
+    $bl01cmd .= "-out $outfile ";
+	
+    ## Format
+    $bl01cmd .= "-outfmt '6 std qlen slen' ";
+	
+    ## Run the command
+    my @bl01run = run( command => $bl01cmd, verbose => $opt_V );
+    
+    ## Process the output to search the lowest position (preferebly 1)
+
+    open my $sb_fh, '<', $outfile;
+    
+    my $origin;
+    my $str;
+    while(<$sb_fh>) {
+	    
+	chomp($_);	    
+	my ($qseqid, $sseqid, $pident, $length, $mismatch, $gapopen, 
+	    $qstart, $qend, $sstart, $send, $evalue, $bitscore, $qlen, 
+	    $slen) = split(/\t/, $_);
+	
+	if ($sstart == 1) { 
+	
+	    $origin = $qstart;
+	    $str = "+";
+	}
+	elsif ($send == 1) {
+	
+	    $origin = $qend;
+	    $str = "-";
+	}
+    }
+
+    return ($origin, $str);
 }

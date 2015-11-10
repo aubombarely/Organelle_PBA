@@ -784,6 +784,12 @@ copy($sprai_scf_fp, $assembly01);
 my @seqstats01 = get_seqstats($assembly01, $refsize);
 print_seqstats("Assembly Step 1 Results", \@seqstats01);
 
+## Check that it has an output
+
+if ($seqstats01[0] == 0) {
+
+    die("\n\nNo contigs was produced during the assembly. Stop program.\n\n");
+}
 
 
 ###############################################################################
@@ -1132,10 +1138,10 @@ else {
     ## do the revcom
     ## and rescaffold the four fragments.
 
-    print STDERR "\t4.6.1- Breaking the assembly.\n";
+    print STDERR "\t5.6.1- Breaking the assembly.\n";
     
     my $asb04io = Bio::SeqIO->new( -file => "$assembly04", -type => 'fasta' );
-    my $assembly05 = File::Spec->catfile($outdir,"05_assembly03breaks.fasta");
+    my $assembly05 = File::Spec->catfile($outdir,"05_6_assembly03breaks.fasta");
     my $asb05io = Bio::SeqIO->new( -file => ">$assembly05", -type => 'fasta' );
 
     ## Additionally it will store the seqobjects into an array for
@@ -1164,7 +1170,7 @@ else {
     }
 
     print STDERR "\t$assembly04 has been broken in $c subsequences.\n\n";
-    print STDERR "\t4.6.2- Comparing fragments.\n";
+    print STDERR "\t5.6.2- Comparing fragments.\n";
 
     ## It will compare the fragments using a self blast
     ## 1- Create the DB with makeblastdb
@@ -1176,7 +1182,7 @@ else {
     my $selfbl01cmd = "exepath{'blastn'} -query $assembly05 -db $assembly05 ";
 	
     ## Create the outputname 
-    my $selfblastout = File::Spec->catfile($outdir,"05_frag_selfblast.txt");
+    my $selfblastout = File::Spec->catfile($outdir,"05_6_frag_selfblast.txt");
     $selfbl01cmd .= "-out $selfblastout ";
 	
     ## Format
@@ -1257,9 +1263,9 @@ else {
     ## At this point the script it ready to produce the sequences that will
     ## be rescaffolded
 	
-    print STDERR "\n\t4.6.3- Selecting the no-redundant sequence set\n";
+    print STDERR "\n\t5.6.3- Selecting the no-redundant sequence set\n";
     my $asb06io = Bio::SeqIO->new(-file => "$assembly05", -type => 'fasta');
-    my $assembly06 = File::Spec->catfile($outdir,"06_assembly04breaks.fasta");
+    my $assembly06 = File::Spec->catfile($outdir,"05_6_assembly04breaks.fasta");
     my $asb07io = Bio::SeqIO->new(-file => ">$assembly06",-type => 'fasta');
 
     my $cc = 1;
@@ -1286,12 +1292,12 @@ else {
 	}	
     }
 
-    print STDERR "\n\t4.6.4- Rescaffolding the sequences with SSPACE-Long.\n";
+    print STDERR "\n\t5.6.4- Rescaffolding the sequences with SSPACE-Long.\n";
 
     ## To accelerate the SSPACE long it will run BlasR separately and then
     ## Copy the file to $sspace2_out/intemediate_files/BLASR_results.txt
 
-    my $sspace2out = File::Spec->catfile($outdir, "06_sspacelong_out");
+    my $sspace2out = File::Spec->catfile($outdir, "05_6_sspacelong_out");
 
     run_sspace_long(\%exepath, \%blasr_args, \%sspace_args, 
 		    $blasr_in, $assembly06, $sspace2out);

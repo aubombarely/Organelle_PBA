@@ -7,6 +7,8 @@
 
 =cut
 
+our $version = '1.0.1';
+
 =head1 SYPNOSIS
 
  OrganelleRef_PBA [-h]  -i <input_pacbio> -r <fasta_reference> -o <output_dir> 
@@ -14,7 +16,7 @@
                   [-s <sprai_ec_options>] [-c <sprai_pbsm_options>] 
                   [-x <fraction_for_scaffolding>] [-l <sspace_long_options>]
                   [-n <repeat_block_size>] [-m <coverage_ratio4repeats>]
-                  [-C]
+                  [-C] [-V] [-v]
 
 =head2 I<Flags:>
 
@@ -72,6 +74,10 @@ B<check_completeness>     check completeness after the circularation check
 =item -V
 
 B<be_verbose>             be verbose and print the parsing status.
+
+=item -v
+
+B<version>                print version
 
 =item -h
 
@@ -151,16 +157,21 @@ use Bio::Tools::Run::StandAloneBlastPlus;
 use Math::BigFloat;
 
 our ($opt_i, $opt_t, $opt_o, $opt_r, $opt_b, $opt_s, $opt_c, $opt_x, $opt_l, 
-     $opt_n, $opt_m, $opt_C, $opt_V, $opt_h);
-getopts("i:t:o:r:b:s:c:x:l:n:m:CVh");
+     $opt_n, $opt_m, $opt_C, $opt_V, $opt_v, $opt_h);
+getopts("i:t:o:r:b:s:c:x:l:n:m:CVvh");
 if (!$opt_i && !$opt_t && !$opt_o && !$opt_r && !$opt_b && !$opt_s && !$opt_x
     && !$opt_l && !$opt_c && !$opt_n && !$opt_m && !$opt_C && !$opt_V 
-    && !$opt_h) {
+    && !$opt_v && !$opt_h) {
     print "There are n\'t any tags. Print help\n\n";
     help();
 }
 if ($opt_h) {
     help();
+}
+elsif ($opt_v) {
+    print STDERR "\nOrganelleRef_PBA version:$version\n";
+    print STDERR "Developed at the Bombarely Laboratory (2015-10-01)\n\n";
+    exit(1);
 }
 
 my $date = `date`;
@@ -1076,7 +1087,6 @@ if ($opt_C) {
 	    
 	    $qcov = $align_len * 100 / $qlen;
 	    $scov = $align_len * 100 / $slen;
-	    print STDERR "\nTEST qcov=$qcov and scov=$scov\n";
 	}
 	
 	if ($qcov >= 98 && $scov >= 98) {
@@ -1500,7 +1510,7 @@ sub help {
 			     [-l <sspace_long_options>] 
                              [-n <repeat_block_size>] 
 			     [-m <coverage_ratio4repeats>] 
-		             [-C] [-V]
+		             [-C] [-V] [-v]
 
     Description:
       
@@ -1559,6 +1569,7 @@ sub help {
       -m <cov_rep_ratio>    cov. ratio to define repetitive region (def. 1.6)
       -C <check_complet>    check completeness after the check_circular
       -V <be_verbose>       be verbose and print the parsing status.
+      -v <version>          print version
       -h <help>             print the help
 
 

@@ -910,7 +910,7 @@ my ($origin, $str) = find_origin($assembly03, $orgref, \%exepath, $oblastout);
 
 my $it_has_origin = 0;
 
-if ($origin =~ m/^\d+$/) {
+if ($origin && $origin =~ m/^\d+$/) {
 
     print STDERR "\t\tOrigin found at $origin\n\n";
     $it_has_origin = 1;
@@ -1074,7 +1074,9 @@ if ($opt_C) {
 	$bl02cmd .= "-outfmt '6 std qlen slen' ";
 	my @bl02run = run( command => $bl02cmd, verbose => $opt_V );
 
-	my ($qcov, $scov) = (0, 0); 
+	## More than one hit can be present, it will get the longest alignment
+
+	my ($qcov, $scov, $best_align_len) = (0, 0, 0); 
 
 	open my $oblast_fh, '<', $fblastout;
 	while(<$oblast_fh>) {
@@ -1085,8 +1087,11 @@ if ($opt_C) {
 	    my $qlen = $bl_fields[12];
 	    my $slen = $bl_fields[13];
 	    
-	    $qcov = $align_len * 100 / $qlen;
-	    $scov = $align_len * 100 / $slen;
+	    if ($align_len >= $best_align_len) {
+		$best_align_len = $align_len; 
+		$qcov = $align_len * 100 / $qlen;
+		$scov = $align_len * 100 / $slen;
+	    }
 	}
 	
 	if ($qcov >= 98 && $scov >= 98) {
@@ -1301,7 +1306,7 @@ if ($endscript == 0) {
 
 	## 2- Now it will do the selfblast BlastN
 	my $blastexe = $exepath{'blastn'};
-	my $selfbl01cmd = "blastexe -query $assembly05 -db $assembly05 ";
+	my $selfbl01cmd = "$blastexe -query $assembly05 -db $assembly05 ";
 	
 	## Create the outputname 
 	my $selfblastout = File::Spec->catfile($outdir,

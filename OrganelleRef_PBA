@@ -7,7 +7,7 @@
 
 =cut
 
-our $version = '1.0.1';
+our $version = '1.0.2';
 
 =head1 SYPNOSIS
 
@@ -16,6 +16,7 @@ our $version = '1.0.1';
                   [-s <sprai_ec_options>] [-c <sprai_pbsm_options>] 
                   [-x <fraction_for_scaffolding>] [-l <sspace_long_options>]
                   [-n <repeat_block_size>] [-m <coverage_ratio4repeats>]
+                  [-z <breaks_overlap>]
                   [-C] [-V] [-v]
 
 =head2 I<Flags:>
@@ -66,6 +67,10 @@ B<repeat_block_size>      size of the block to detect repeats by cov (def. 1000)
 =item -m
 
 B<coverage_ratio4repeats> coverage ratio to define repetitive region (def. 1.6)
+
+=item -z
+
+B<breaks_overlap>         overlap produced during repeats breaks (default 0)
 
 =item -C
 
@@ -157,11 +162,11 @@ use Bio::Tools::Run::StandAloneBlastPlus;
 use Math::BigFloat;
 
 our ($opt_i, $opt_t, $opt_o, $opt_r, $opt_b, $opt_s, $opt_c, $opt_x, $opt_l, 
-     $opt_n, $opt_m, $opt_C, $opt_V, $opt_v, $opt_h);
-getopts("i:t:o:r:b:s:c:x:l:n:m:CVvh");
+     $opt_n, $opt_m, $opt_z, $opt_C, $opt_V, $opt_v, $opt_h);
+getopts("i:t:o:r:b:s:c:x:l:n:m:z:CVvh");
 if (!$opt_i && !$opt_t && !$opt_o && !$opt_r && !$opt_b && !$opt_s && !$opt_x
-    && !$opt_l && !$opt_c && !$opt_n && !$opt_m && !$opt_C && !$opt_V 
-    && !$opt_v && !$opt_h) {
+    && !$opt_l && !$opt_c && !$opt_n && !$opt_m && !$opt_z && !$opt_C && 
+    !$opt_V && !$opt_v && !$opt_h) {
     print "There are n\'t any tags. Print help\n\n";
     help();
 }
@@ -312,6 +317,21 @@ if ($opt_x) {
 }
 
 print STDERR "\tCompleteness fraction: $asmfrc\n";
+
+my $break_ovl = 0;
+if ($opt_z) {
+
+    unless ($opt_z =~ m/\d+\.?\d?/) {
+    
+	die("ERROR: -z <breaks_overlap> isnt numeric.\n");
+    }
+    else {
+    
+	$break_ovl = $opt_z;
+    }
+}
+
+print STDERR "\tBreaks overlap: $break_ovl\n";
 
 ## Process the passing options
 
@@ -1037,6 +1057,9 @@ while(<$checkcirc_fh>) {
     }
 }
 
+my @seqstats03 = get_seqstats($assembly04, $refsize);
+print_seqstats("Assembly Step 3 Results", \@seqstats03);
+
 ####################################################################
 ## Evaluate completeness after circularity evaluation
 ####################################################################
@@ -1044,6 +1067,12 @@ while(<$checkcirc_fh>) {
 ## It can happens that the reference is not complete so it will a 
 ## option to evaluate the completeness of the assembly after the
 ## removal of the circularity
+
+## Define a final assembly variable
+## This variable will be used with copy if the program detects that it is
+## the best assembly
+
+my $finalfile = File::Spec->catfile($outdir, "Organelle_final_assembly.fasta");
 
 my $endscript = 0;
 if ($opt_C) {
@@ -1101,14 +1130,7 @@ if ($opt_C) {
 	    print STDERR "\n\tAssembly meets the requirements to be";
 	    print STDERR " considered finished (-C Enabled).\n\n";
 	    
-	    my $finalfile = File::Spec->catfile($outdir,
-					    "Organelle_final_assembly.fasta");
-
-	    copy($assembly04, $finalfile);
-	    print STDERR "\n\tFINAL ASSEMBLY FILE: $finalfile\n";
-	    my @fi_seqstats = get_seqstats($finalfile, $refsize);
-	    print_seqstats("Final Assembly Results", \@fi_seqstats);
-	   
+	    copy($assembly04, $finalfile);	   
 	    $endscript = 1;	    
 	}
 	else {
@@ -1245,14 +1267,8 @@ if ($endscript == 0) {
 
 	print STDERR "\n\tNo repeats breaking points detected.\n";
 
-	my $assembly07 = File::Spec->catfile($outdir,
-					     "Organelle_final_assembly.fasta");
-
 	## Copy to final name
-	copy($assembly04, $assembly07);
-	print STDERR "\n\tFINAL ASSEMBLY FILE: $assembly07\n";
-	my @seqstats03 = get_seqstats($assembly07, $refsize);
-	print_seqstats("Final Assembly Results", \@seqstats03);
+	copy($assembly04, $finalfile);
     }
     else {
 
@@ -1275,13 +1291,36 @@ if ($endscript == 0) {
 
 	## It should have just one sequence
 	my $c = 0;
+
 	while (my $wseqobj = $asb04io->next_seq()) {
 
 	    my $pid = $wseqobj->id();
+	    my $len = $wseqobj->length();
 	    foreach my $break (sort {$a <=> $b} keys %breaks) {
     
 		my $st = $breaks{$break}->{start};
 		my $en = $breaks{$break}->{end};
+		my $minlim = $st - $break_ovl;
+		my $maxlim = $en + $break_ovl;
+
+		## Modify the coordinate based in break_ovl
+		if ($minlim < 1) {
+		
+		    $st = 1;
+		}
+		else {
+		
+		    $st = $st - $break_ovl;
+		}
+
+		if ($maxlim > $len) {
+		
+		    $en = $len;
+		}
+		else {
+		
+		    $en = $en + $break_ovl;
+		}
 		
 		print STDERR "\tGetting the subsequence $pid:$st..$en\n";
 		my $subseq = $wseqobj->trunc($st, $en);
@@ -1463,23 +1502,67 @@ if ($endscript == 0) {
 	run_sspace_long(\%exepath, \%blasr_args, \%sspace_args, 
 			$blasr_in, $assembly06, $sspace2out);
 
-	## An extra step to check circularity will polish the output
-	
-	
-
 	## Get the results
 	my $preassembly07 = File::Spec->catfile($sspace2out, "scaffolds.fasta");
-	my $assembly07 = File::Spec->catfile($outdir,
-					     "Organelle_final_assembly.fasta");
-
-	## Copy to outside dir
+	my $assembly07 = File::Spec->catfile($outdir, "05_7_assembly.fasta");
 	copy($preassembly07, $assembly07);
+
+	## And the stats
+	my @seqstats04 = get_seqstats($assembly07, $refsize);
+	print_seqstats("Assembly Step 4 Results", \@seqstats04);
+
+	## At this point will check if the output is better than the previous 
+	## step. If it isn't it will copy the last step as the final assembly
 	
-	print STDERR "\n\tFINAL ASSEMBLY FILE: $assembly07\n\n";
-	my @seqstats03 = get_seqstats($assembly07, $refsize);
-	print_seqstats("Assembly Step 3 Results", \@seqstats03);
+	## Points to check
+	## 1- Size of longest scaffold compared with the reference
+	## 2- Number of Ns
+
+	my $longref_absratio_p = abs(1 - $seqstats03[5]);
+	my $longref_absratio_c = abs(1 - $seqstats04[5]);
+	my $longref_gapsize_p = $seqstats03[7];
+	my $longref_gapsize_c = $seqstats04[7];
+
+	if ($longref_absratio_p <= $longref_absratio_c) {
+	
+	    if ($longref_gapsize_p <= $longref_gapsize_c) {
+	    
+		print STDERR "\t\tNo clear improvement was produced from the ";
+		print STDERR "repeat reassembly.\n";
+		print STDERR "\t\tSelecting $assembly04 as final assembly.\n";
+		$finalfile = $assembly04;
+	    }
+	    else {
+		print STDERR "\t\t$assembly07 presents smaller gap size and";
+		print STDERR "$assembly04 presents closest size to reference\n";
+		print STDERR "\t\tSelecting $assembly07 as final assembly";
+		$finalfile = $assembly07;
+	    }
+	}
+	else {
+
+	    if ($longref_gapsize_p <= $longref_gapsize_c) {
+	    
+		print STDERR "\t\t$assembly04 presents smaller gap size and";
+		print STDERR "$assembly07 presents closest size to reference\n";
+		print STDERR "\t\tSelecting $assembly07 as final assembly";
+		$finalfile = $assembly07;
+	    }
+	    else {
+		
+		print STDERR "\t\t$assembly07 has smaller gap size and a size ";
+		print STDERR "closer to the reference than $assembly04.\n";
+		print STDERR "\t\tSelecting $assembly07 as final assembly\n";
+		$finalfile = $assembly07;
+	    }
+	}
     }	
 }
+
+print STDERR "\n\tFINAL ASSEMBLY FILE: $finalfile\n";
+my @fi_seqstats = get_seqstats($finalfile, $refsize);
+print_seqstats("Final Assembly Results", \@fi_seqstats);
+
 
 $date = `date`;
 chomp($date);
@@ -1515,6 +1598,7 @@ sub help {
 			     [-l <sspace_long_options>] 
                              [-n <repeat_block_size>] 
 			     [-m <coverage_ratio4repeats>] 
+			     [-z <breaks_overlap>]
 		             [-C] [-V] [-v]
 
     Description:
@@ -1572,6 +1656,7 @@ sub help {
       -l <sspace_long_opts> passing the SSPACE-Long options as 'opt1=val1...'
       -n <repeat_block>     block size to detect repeats by cov (def. 1000)
       -m <cov_rep_ratio>    cov. ratio to define repetitive region (def. 1.6)
+      -z <breaks_overlap>   overlap for the repeat subseqs (default 0)
       -C <check_complet>    check completeness after the check_circular
       -V <be_verbose>       be verbose and print the parsing status.
       -v <version>          print version
@@ -1831,7 +1916,10 @@ sub create_ca_pbasm_file {
 ##   [2] longest sequence size
 ##   [3] longest sequence id
 ##   [4] ratio total length / reference size
-##   [5] ratio longest sequence size / reference size 
+##   [5] ratio longest sequence size / reference size
+##   [6] total Ns
+##   [7] Ns for the longest sequence
+##   [8] Difference bp with the reference 
 ###############################################################################
 
 sub get_seqstats {
@@ -1840,23 +1928,29 @@ sub get_seqstats {
 
     my $asmseq_io = Bio::SeqIO->new( -file => $file, -type => 'fasta' );
 
-    my $seqc = 0;
-    my $max_seql = 0;
-    my $total_l = 0;
+    my ($seqc, $max_seql, $total_l, $longest_ns, $total_ns) = (0, 0, 0, 0, 0);
     my $max_seqid = '';
+    my $difref_size = 0;
 
     while( my $seqobj = $asmseq_io->next_seq() ) {
 
 	my $seqid = $seqobj->id();
 	my $seq_l = $seqobj->length();
+	my $seq = $seqobj->seq();
+	$seq =~ s/N//i;
+	my $nonlen = length($seq);
+	my $ns = $seq_l - $nonlen;
 
 	$seqc++;
 	$total_l += $seq_l;
+	$total_ns += $ns;
 
 	if ($seq_l >= $max_seql) {
 	    
 	    $max_seql = $seq_l;
 	    $max_seqid = $seqid;
+	    $longest_ns = $ns;
+	    $difref_size = abs($refsize - $max_seql);
 	}
     }
     
@@ -1867,7 +1961,8 @@ sub get_seqstats {
     my $est_asm02_obj = Math::BigFloat->new($max_seql/$refsize);
     my $est_asm02 = $est_asm02_obj->bfround(-2);
 
-    my @data = ($seqc, $total_l, $max_seql, $max_seqid, $est_asm01, $est_asm02);
+    my @data = ($seqc, $total_l, $max_seql, $max_seqid, $est_asm01, $est_asm02,
+	$total_ns, $longest_ns, $difref_size);
     return @data;
 }
 
@@ -1879,16 +1974,20 @@ sub print_seqstats {
     my $message = shift;
     my $stats = shift;
     
-    my ($seqc,$total_l,$max_seql,$max_seqid,$est_asm01,$est_asm02) = @{$stats};
+    my ($seqc,$total_l,$max_seql,$max_seqid,$est_asm01,$est_asm02, $total_ns,
+	$longest_ns, $difref_size) = @{$stats};
 
     print STDERR "\n\t$message\n";
     print STDERR "\t-----------------------\n";
     print STDERR "\t * Total scaffolds: $seqc\n";
-    print STDERR "\t * Total size: $total_l\n";
-    print STDERR "\t * Longest scaffold size: $max_seql\n";
+    print STDERR "\t * Total size (bp): $total_l\n";
+    print STDERR "\t * Total gaps size (Ns): $total_ns\n\n";
+    print STDERR "\t * Longest scaffold size (bp): $max_seql\n";
+    print STDERR "\t * Longest scaffold gap size (Ns): $longest_ns\n";
     print STDERR "\t * Longest scaffold id: $max_seqid\n\n";
     print STDERR "\t * Total assembly ref. fraction: $est_asm01\n";
-    print STDERR "\t * Longest assembly ref. fraction: $est_asm02\n\n";
+    print STDERR "\t * Longest assembly ref. fraction: $est_asm02\n";
+    print STDERR "\t * Different in size with ref. (bp): $difref_size\n\n";
 }
 
 ##############################################################################

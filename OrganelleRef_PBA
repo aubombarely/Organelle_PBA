@@ -7,7 +7,7 @@
 
 =cut
 
-our $version = '1.0.2';
+our $version = '1.0.3';
 
 =head1 SYPNOSIS
 
@@ -185,6 +185,10 @@ print STDERR "\n\n############################################################";
 print STDERR "\n## OrganelleRef_PBA Starts ($date) ##\n";
 print STDERR "############################################################\n\n";
 
+## Define a variable to keep the stats;
+
+my %gstats = ();
+
 print_header("0) Checking arguments");
 
 ##############################################################################
@@ -269,6 +273,7 @@ else {
     }
 
     print STDERR "\t\tOrganelle reference size: $refsize bp\n";
+    $gstats{'00_reference_size'} = $refsize;
 }
 
 my $repeat_blocksize = 1000;
@@ -590,6 +595,12 @@ my $count_cmd = "grep -c '>' $blasr_in";
 my @count01run = run( command => $count_cmd, verbose => $opt_V );
 my $seqcount = $count01run[3]->[0];
 chomp($seqcount);
+
+my $seqsize_cmd = "grep -v '>' $blasr_in | wc -m";
+my @seqsize01run = run( command => $seqsize_cmd, verbose => $opt_V );
+my $seqsize = $seqsize01run[3]->[0];
+chomp($seqsize);
+
 $seqcounter = $seqcount;
 
 ## It will overwrite the out
@@ -607,6 +618,8 @@ else {
 ## Build the $cmd line
 
 print STDERR "\t     Input PacBio read file contains $seqcounter reads\n\n";
+$gstats{'00_input_reads_count'} = $seqcounter;
+$gstats{'00_input_reads_size'} = $seqsize;
 
 my @blasr_cmd = ($exepath{'blasr'}, $blasr_in, $orgref);
 foreach my $blasr_k (sort keys %blasr_args) {
@@ -667,6 +680,8 @@ while(<$blasrout_fh>) {
 } 
 
 print STDERR "\t      $l reads ($total_len bp) will be selected\n";
+$gstats{'01_mapped_reads'} = $l;
+$gstats{'01_mapped_size'} = $total_len;
 
 ## It will also produce the estimated size
 my $est_size = $sprai_ec{estimated_genome_size} || $refsize; 
@@ -674,7 +689,7 @@ my $est_size = $sprai_ec{estimated_genome_size} || $refsize;
 my $est_depth_obj = Math::BigFloat->new($total_len/$est_size);
 my $est_depth = $est_depth_obj->bfround(0);
 print STDERR "\t      Estimated depth (reference based): $est_depth X.\n\n";
-
+$gstats{'01_estimated_depth'} = $est_depth;
 
 print STDERR "\t1.4- Selecting reads from the $intype file\n";
 
@@ -800,6 +815,7 @@ unless (-d $sprai_finaldir) {
     die("ERROR: Sprai/CA didnt produced an output 9-terminator. Check log.\n");
 }
 
+
 opendir(my $sprai_dh, $sprai_finaldir); 
 
 my $sprai_scf;
@@ -822,6 +838,14 @@ copy($sprai_scf_fp, $assembly01);
 
 my @seqstats01 = get_seqstats($assembly01, $refsize);
 print_seqstats("Assembly Step 1 Results", \@seqstats01);
+$gstats{'02_seqtotal_count'} = $seqstats01[0];
+$gstats{'02_seqtotal_length'} = $seqstats01[1];
+$gstats{'02_seqtotal_gaplength'} = $seqstats01[6];
+$gstats{'02_seqtotal_refratio'} = $seqstats01[4];
+$gstats{'02_seqlongest_length'} = $seqstats01[2];
+$gstats{'02_seqlongest_gaplength'} = $seqstats01[7];
+$gstats{'02_seqlongest_refratio'} = $seqstats01[5];
+$gstats{'02_seqtotal_refdif'} = $seqstats01[8];
 
 ## Check that it has an output
 
@@ -885,6 +909,14 @@ else {
 
 my @seqstats02 = get_seqstats($assembly02, $refsize);
 print_seqstats("Assembly Step 2 Results", \@seqstats02);
+$gstats{'03_seqtotal_count'} = $seqstats02[0];
+$gstats{'03_seqtotal_length'} = $seqstats02[1];
+$gstats{'03_seqtotal_gaplength'} = $seqstats02[6];
+$gstats{'03_seqtotal_refratio'} = $seqstats02[4];
+$gstats{'03_seqlongest_length'} = $seqstats02[2];
+$gstats{'03_seqlongest_gaplength'} = $seqstats02[7];
+$gstats{'03_seqlongest_refratio'} = $seqstats02[5];
+$gstats{'03_seqtotal_refdif'} = $seqstats02[8];
 
 ## At this point will take the longest sequence
 
@@ -1059,6 +1091,15 @@ while(<$checkcirc_fh>) {
 
 my @seqstats03 = get_seqstats($assembly04, $refsize);
 print_seqstats("Assembly Step 3 Results", \@seqstats03);
+$gstats{'04_seqtotal_count'} = $seqstats03[0];
+$gstats{'04_seqtotal_length'} = $seqstats03[1];
+$gstats{'04_seqtotal_gaplength'} = $seqstats03[6];
+$gstats{'04_seqtotal_refratio'} = $seqstats03[4];
+$gstats{'04_seqlongest_length'} = $seqstats03[2];
+$gstats{'04_seqlongest_gaplength'} = $seqstats03[7];
+$gstats{'04_seqlongest_refratio'} = $seqstats03[5];
+$gstats{'04_seqtotal_refdif'} = $seqstats03[8];
+
 
 ####################################################################
 ## Evaluate completeness after circularity evaluation
@@ -1195,7 +1236,14 @@ if ($endscript == 0) {
     print STDERR "\t5.3- Sorting bam file.\n\n";
 
     my @sam02run = run( command => $samtools02cmd, verbose => $opt_V );
-    
+
+    ## It will calculate the mapped reads
+    my $getmap01cmd = "$exepath{samtools} view -F4 -Sb -c $blasr2out";
+    my @getmap01run = run( command => $getmap01cmd, verbose => $opt_V );
+    my $getmap01count = $getmap01run[3]->[0];
+    chomp($getmap01count);
+    $gstats{'05_mapped_reads'} = $getmap01count;
+
     ## Now it will calculate the coverage per position
     ## This needs genome file such as <chromName><TAB><chromSize>
 
@@ -1249,6 +1297,10 @@ if ($endscript == 0) {
     print STDERR "\tAverage coverage:\t$covstats{c_average}\n";
     print STDERR "\tLower limit coverage:\t$covstats{lower_limit}\n";
     print STDERR "\tUpper limit coverage:\t$covstats{upper_limit}\n\n";
+    $gstats{'05_coverage_max'} = $covstats{c_max};
+    $gstats{'05_coverage_min'} = $covstats{c_min};
+    $gstats{'05_coverage_mean'} = $covstats{c_average};
+    $gstats{'05_coverage_total'} = $covstats{total_cov};
 
     print STDERR "\t5.5- Getting the breaking points\n";
 
@@ -1510,6 +1562,14 @@ if ($endscript == 0) {
 	## And the stats
 	my @seqstats04 = get_seqstats($assembly07, $refsize);
 	print_seqstats("Assembly Step 4 Results", \@seqstats04);
+	$gstats{'05_seqtotal_count'} = $seqstats04[0];
+	$gstats{'05_seqtotal_length'} = $seqstats04[1];
+	$gstats{'05_seqtotal_gaplength'} = $seqstats04[6];
+	$gstats{'05_seqtotal_refratio'} = $seqstats04[4];
+	$gstats{'05_seqlongest_length'} = $seqstats04[2];
+	$gstats{'05_seqlongest_gaplength'} = $seqstats04[7];
+	$gstats{'05_seqlongest_refratio'} = $seqstats04[5];
+	$gstats{'05_seqtotal_refdif'} = $seqstats04[8];
 
 	## At this point will check if the output is better than the previous 
 	## step. If it isn't it will copy the last step as the final assembly
@@ -1562,6 +1622,22 @@ if ($endscript == 0) {
 print STDERR "\n\tFINAL ASSEMBLY FILE: $finalfile\n";
 my @fi_seqstats = get_seqstats($finalfile, $refsize);
 print_seqstats("Final Assembly Results", \@fi_seqstats);
+$gstats{'99_seqtotal_count'} = $fi_seqstats[0];
+$gstats{'99_seqtotal_length'} = $fi_seqstats[1];
+$gstats{'99_seqtotal_gaplength'} = $fi_seqstats[6];
+$gstats{'99_seqtotal_refratio'} = $fi_seqstats[4];
+$gstats{'99_seqlongest_length'} = $fi_seqstats[2];
+$gstats{'99_seqlongest_gaplength'} = $fi_seqstats[7];
+$gstats{'99_seqlongest_refratio'} = $fi_seqstats[5];
+$gstats{'99_seqtotal_refdif'} = $fi_seqstats[8];
+
+## Print the stats in a final file
+my $colstats_file = File::Spec->catfile($outdir, "Collected_stats.txt");
+open my $cs_fh, '>', $colstats_file;
+foreach my $par (sort keys %gstats) {
+
+    print $cs_fh "$par\t$gstats{$par}\n";
+}
 
 
 $date = `date`;

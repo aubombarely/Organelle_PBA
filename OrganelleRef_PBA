@@ -670,7 +670,10 @@ while(<$blasrout_fh>) {
    
     my @id = split(/\//, $line[0]);
     my $len = $line[11];
-    pop(@id);
+    
+    if (scalar(@id) > 1) {
+	pop(@id);
+    }
     my $id = join("/", @id); 
 
     $selected_ids{$id} = $len;
@@ -1590,13 +1593,13 @@ if ($endscript == 0) {
 		print STDERR "\t\tNo clear improvement was produced from the ";
 		print STDERR "repeat reassembly.\n";
 		print STDERR "\t\tSelecting $assembly04 as final assembly.\n";
-		$finalfile = $assembly04;
+		copy($assembly04, $finalfile);
 	    }
 	    else {
 		print STDERR "\t\t$assembly07 presents smaller gap size and";
 		print STDERR "$assembly04 presents closest size to reference\n";
 		print STDERR "\t\tSelecting $assembly07 as final assembly";
-		$finalfile = $assembly07;
+		copy($assembly07, $finalfile);
 	    }
 	}
 	else {
@@ -1606,14 +1609,14 @@ if ($endscript == 0) {
 		print STDERR "\t\t$assembly04 presents smaller gap size and";
 		print STDERR "$assembly07 presents closest size to reference\n";
 		print STDERR "\t\tSelecting $assembly07 as final assembly";
-		$finalfile = $assembly07;
+		copy($assembly07, $finalfile);
 	    }
 	    else {
 		
 		print STDERR "\t\t$assembly07 has smaller gap size and a size ";
 		print STDERR "closer to the reference than $assembly04.\n";
 		print STDERR "\t\tSelecting $assembly07 as final assembly\n";
-		$finalfile = $assembly07;
+		copy($assembly07, $finalfile);
 	    }
 	}
     }	

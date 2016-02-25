@@ -46,4 +46,14 @@ To install the program
 git clone https://github.com/aubombarely/Organelle_PBA.git
 ```
 
+Once the directory is copied, you'll need to set up the environmental variables if the binaries of these programs are not in the PATH.
 
+```
+    export BLASR_PATH=<path_to_BlasR_binary>;
+    export SAMTOOLS_PATH=<path_to_samtools_binaries>;
+    export SPRAI_PATH=<path_to_Sprai_scripts>;
+    export BLAST_PATH=<path_to_blast_binaries>;
+    export CA_PATH=<path_to_WGS-assembler_binaries>;
+    export SSPACELONG_PATH=<path_to_SSPACE-Long.pl_script>;
+    export BEDTOOLS_PATH=<path_to_bedtools_binaries>;
+```

@@ -23,12 +23,17 @@ SOFTWARE REQUIREMENTS
 ---------------------
 
 * [BioPerl](http://www.bioperl.org/wiki/Installing_BioPerl) -- (used to process sequences)
-* Seqtk (used to change formats fastq/fasta)
-* BlastN (used for the assembly, find origin and check circularity)
-* BlasR (used to get the organelle related reads)
-* Samtools (used to process BlasR output for coverage)
-* Bedtools (used to calculate coverage for the repeat analysis)
-* Sprai (used for de-novo assembly)
-* WGS-Assembler (used for de-novo asembly by Sprai)
-* SSPACE-Long (used for the rescaffolding)
+* [Seqtk](https://github.com/lh3/seqtk) -- (used to change formats fastq/fasta)
+* [BlastN](https://blast.ncbi.nlm.nih.gov/Blast.cgi?PAGE_TYPE=BlastDocs&DOC_TYPE=Download) -- (used for the assembly, find origin and check circularity)
+* [BlasR](https://github.com/PacificBiosciences/blasr/blob/master/README.INSTALL.md) -- (used to get the organelle related reads)
+* [Samtools](http://samtools.sourceforge.net/) -- (used to process BlasR output for coverage)
+* [Bedtools](http://bedtools.readthedocs.org/en/latest/) -- (used to calculate coverage for the repeat analysis)
+* [Sprai](http://zombie.cb.k.u-tokyo.ac.jp/sprai/README.html) -- (used for de-novo assembly)
+* [WGS-Assembler](http://wgs-assembler.sourceforge.net) -- (used for de-novo asembly by Sprai)
+* [SSPACE-Long](http://www.baseclear.com/genomics/bioinformatics/basetools/SSPACE-longread) -- (used for the rescaffolding)
 
+Most of these programs can be installed from repositories (e.g. Blast).
+
+
+INSTALLATION
+------------

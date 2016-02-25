@@ -40,8 +40,8 @@ INSTALLATION
 
 To install the program
 
-'''
+```
 git clone https://github.com/aubombarely/Organelle_PBA.git
-'''
+```
 
 

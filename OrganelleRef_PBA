@@ -7,7 +7,7 @@
 
 =cut
 
-our $version = '1.0.3';
+our $version = '1.0.4';
 
 =head1 SYPNOSIS
 
@@ -390,7 +390,7 @@ my %exec_list = (
     SAMTOOLS_PATH   => ['samtools'],
     SPRAI_PATH      => ['ezez_vx1.pl', 'ezez4qsub_vx1.pl', 'bfmt72s', 
 			'm52bfmt7', 'myrealigner', 'nss2v_v3', 'fa2fq.pl',
-                        'check_circularity.pl'],
+                        'check_circularity.pl', 'dfq2fq_v2.pl'],
     BLAST_PATH      => ['blastn', 'makeblastdb'],
     CA_PATH         => ['runCA', 'pacBioToCA', 'PBcR'],
     SSPACELONG_PATH => ['SSPACE-LongRead.pl'],
@@ -601,6 +601,24 @@ my @seqsize01run = run( command => $seqsize_cmd, verbose => $opt_V );
 my $seqsize = $seqsize01run[3]->[0];
 chomp($seqsize);
 
+## The PacBio ID can be: 
+## 1-ID/digit/digit_digit
+## 2-ID/digit
+## It will analyze the blasr_in file to determine what kind of type it is
+
+my $checkidtype_cmd = "grep '>' $blasr_in | head -n 1";
+my @checkidtype01run = run( command => $checkidtype_cmd, verbose => $opt_V );
+my $firstid = $checkidtype01run[3]->[0];
+chomp($firstid);
+
+my $seqidtype = 2;
+if ($firstid =~ m/^>.+\/\d+\/\d+_\d+/) {
+
+    $seqidtype = 1;
+}
+
+
+
 $seqcounter = $seqcount;
 
 ## It will overwrite the out
@@ -667,11 +685,13 @@ while(<$blasrout_fh>) {
     my @line = split(/\s+/, $_);
 
     ## BlasR output add an extra /0_\d+ at the end of the line
+    ## This extra output, may or may not be present in the PacBio fastq file
+    ## It will modify this formating depending of the ID type detected
    
     my @id = split(/\//, $line[0]);
     my $len = $line[11];
     
-    if (scalar(@id) > 1) {
+    if (scalar(@id) > 1 && $seqidtype == 2) {
 	pop(@id);
     }
     my $id = join("/", @id); 
@@ -794,6 +814,17 @@ my $sprai_pb =  File::Spec->catfile($outdir, "02_1_Sprai_pbasm.spec");
 create_ca_pbasm_file($sprai_pb, \%sprai_pbasm);
 
 my $sprai_log =  File::Spec->catfile($outdir, "02_1_Sprai_log.txt");
+
+## Sprai uses some additional scripts that it may not be in the PATH
+## It is recommended to change the PATH to let sprai as script
+## use them. In theory it should be able to find these scripts using
+## sprai_ec conf. file but this secript doesn't have the path integrated
+## with its executation
+
+if ($ENV{SPRAI_PATH}) {
+
+    $ENV{PATH} = "$ENV{PATH}:$ENV{SPRAI_PATH}";
+}
 
 ## Build the command
 

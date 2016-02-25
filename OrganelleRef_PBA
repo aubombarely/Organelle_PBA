@@ -7,7 +7,7 @@
 
 =cut
 
-our $version = '1.0.4';
+our $version = '1.0.5';
 
 =head1 SYPNOSIS
 
@@ -16,7 +16,7 @@ our $version = '1.0.4';
                   [-s <sprai_ec_options>] [-c <sprai_pbsm_options>] 
                   [-x <fraction_for_scaffolding>] [-l <sspace_long_options>]
                   [-n <repeat_block_size>] [-m <coverage_ratio4repeats>]
-                  [-z <breaks_overlap>]
+                  [-z <breaks_overlap>] [-a <highest_ori_position>]
                   [-C] [-V] [-v]
 
 =head2 I<Flags:>
@@ -71,6 +71,10 @@ B<coverage_ratio4repeats> coverage ratio to define repetitive region (def. 1.6)
 =item -z
 
 B<breaks_overlap>         overlap produced during repeats breaks (default 0)
+
+=item -a
+
+B<highest_oripos>         highest position to set up an origin (default 1)
 
 =item -C
 
@@ -162,11 +166,11 @@ use Bio::Tools::Run::StandAloneBlastPlus;
 use Math::BigFloat;
 
 our ($opt_i, $opt_t, $opt_o, $opt_r, $opt_b, $opt_s, $opt_c, $opt_x, $opt_l, 
-     $opt_n, $opt_m, $opt_z, $opt_C, $opt_V, $opt_v, $opt_h);
-getopts("i:t:o:r:b:s:c:x:l:n:m:z:CVvh");
+     $opt_n, $opt_m, $opt_z, $opt_a, $opt_C, $opt_V, $opt_v, $opt_h);
+getopts("i:t:o:r:b:s:c:x:l:n:m:z:a:CVvh");
 if (!$opt_i && !$opt_t && !$opt_o && !$opt_r && !$opt_b && !$opt_s && !$opt_x
-    && !$opt_l && !$opt_c && !$opt_n && !$opt_m && !$opt_z && !$opt_C && 
-    !$opt_V && !$opt_v && !$opt_h) {
+    && !$opt_l && !$opt_c && !$opt_n && !$opt_m && !$opt_z && !$opt_a && 
+    !$opt_C && !$opt_V && !$opt_v && !$opt_h) {
     print "There are n\'t any tags. Print help\n\n";
     help();
 }
@@ -337,6 +341,21 @@ if ($opt_z) {
 }
 
 print STDERR "\tBreaks overlap: $break_ovl\n";
+
+my $orimargin = 1;
+if ($opt_a) {
+
+    unless ($opt_a =~ m/^\d+$/) {
+    
+	die("ERROR: -a <highest_origin_position> isnt numeric.\n");
+    }
+    else {
+    
+	$orimargin = $opt_a;
+    }
+}
+
+print STDERR "\tHighest position to set up origin: $orimargin\n";
 
 ## Process the passing options
 
@@ -992,7 +1011,8 @@ print STDERR "\t4.1- Searching an origin based in the reference\n";
 ## To do it, it will blast the sequence to find a match 
 
 my $oblastout = File::Spec->catfile($outdir,"04_1_origin_blast.txt");
-my ($origin, $str) = find_origin($assembly03, $orgref, \%exepath, $oblastout); 
+my ($origin, $str) = find_origin($assembly03, $orgref, \%exepath, $oblastout, 
+				 $orimargin); 
 
 my $it_has_origin = 0;
 
@@ -1590,8 +1610,22 @@ if ($endscript == 0) {
 
 	## Get the results
 	my $preassembly07 = File::Spec->catfile($sspace2out, "scaffolds.fasta");
+	
+	## It need to check that SSPACE out produced a file	
 	my $assembly07 = File::Spec->catfile($outdir, "05_7_assembly.fasta");
-	copy($preassembly07, $assembly07);
+	
+	if (-f $preassembly07) {
+
+	    copy($preassembly07, $assembly07);
+	}
+	else {
+	
+	    print STDERR "\n\t\tNo output file was found for SSPACE-OUT.";
+	    print STDERR "\n\t\tUsing last assembly output.\n";
+	    copy($assembly04, $assembly07)
+	}
+	
+	    
 
 	## And the stats
 	my @seqstats04 = get_seqstats($assembly07, $refsize);
@@ -1709,6 +1743,7 @@ sub help {
                              [-n <repeat_block_size>] 
 			     [-m <coverage_ratio4repeats>] 
 			     [-z <breaks_overlap>]
+			     [-a <highest_ori_position>]
 		             [-C] [-V] [-v]
 
     Description:
@@ -1732,9 +1767,9 @@ sub help {
      
       3- Rescaffolding of the contigs produced by Sprai with SSPACE-Long.
      
-      4- Check circularity and origin, if both are positive it will evaluate
-         completeness (-C), and finish the script if it is complete 
-	 (>98% coverage)
+      4- Check circularity and origin comparin the sequence with the reference,
+         if both are positive it will evaluate completeness (-C), and 
+         finish the script if it is complete  (>98% coverage)
      
       5- First mapping round with the assembly to find repetitive regions.
      
@@ -1767,6 +1802,7 @@ sub help {
       -n <repeat_block>     block size to detect repeats by cov (def. 1000)
       -m <cov_rep_ratio>    cov. ratio to define repetitive region (def. 1.6)
       -z <breaks_overlap>   overlap for the repeat subseqs (default 0)
+      -a <highest_oripos>   highest position to set up origin (default 1)
       -C <check_complet>    check completeness after the check_circular
       -V <be_verbose>       be verbose and print the parsing status.
       -v <version>          print version
@@ -2433,15 +2469,13 @@ sub find_origin {
     my $subject = shift;
     my $exepath_href = shift;
     my $outfile = shift;
+    my $orimargin = shift;
 
     my %exepath = %{$exepath_href};
 
-    my $mkblastdbcmd = "$exepath{'makeblastdb'} -in $subject -dbtype nucl";
-    my @mkblastdb01run = run( command => $mkblastdbcmd, verbose => $opt_V );
-
     ## 2- Now it will do the selfblast BlastN
-    my $bl01cmd = "$exepath{'blastn'} -query $query -db $subject ";
-    $bl01cmd .= "-out $outfile ";
+    my $bl01cmd = "$exepath{'blastn'} -task megablast -query $query ";
+    $bl01cmd .= "-subject $subject -out $outfile ";
 	
     ## Format
     $bl01cmd .= "-outfmt '6 std qlen slen' ";
@@ -2462,12 +2496,14 @@ sub find_origin {
 	    $qstart, $qend, $sstart, $send, $evalue, $bitscore, $qlen, 
 	    $slen) = split(/\t/, $_);
 	
-	if ($sstart == 1) { 
+	## It will give a margin about the origin 10 bp
+
+	if ($sstart <= $orimargin) { 
 	
 	    $origin = $qstart;
 	    $str = "+";
 	}
-	elsif ($send == 1) {
+	elsif ($send <= $orimargin) {
 	
 	    $origin = $qend;
 	    $str = "-";

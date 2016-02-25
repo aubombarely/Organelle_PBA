@@ -37,3 +37,11 @@ Most of these programs can be installed from repositories (e.g. Blast).
 
 INSTALLATION
 ------------
+
+To install the program
+
+'''
+git clone https://github.com/aubombarely/Organelle_PBA.git
+'''
+
+

@@ -32,6 +32,8 @@ SOFTWARE REQUIREMENTS
 * [WGS-Assembler](http://wgs-assembler.sourceforge.net) -- (used for de-novo asembly by Sprai)
 * [SSPACE-Long](http://www.baseclear.com/genomics/bioinformatics/basetools/SSPACE-longread) -- (used for the rescaffolding)
 
+Note: SSPACE-Long uses getopt that it is not present in the Perl5 corelib. To fix this problem you can install it with ```cpan Perl4::CoreLibs```.
+
 Most of these programs can be installed from repositories (e.g. Blast).
 
 

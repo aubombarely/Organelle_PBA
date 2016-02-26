@@ -57,3 +57,13 @@ Once the directory is copied, you'll need to set up the environmental variables 
     export SSPACELONG_PATH=<path_to_SSPACE-Long.pl_script>;
     export BEDTOOLS_PATH=<path_to_bedtools_binaries>;
 ```
+
+QUICK USAGE GUIDE
+-----------------
+
+```
+mkdir chloro_out
+
+OrganelleRef_PBA -i MySpeciesPacBio.fastq -r MyReferenceCHL.fasta -o chloro_out
+```
+

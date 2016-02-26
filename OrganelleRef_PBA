@@ -7,7 +7,7 @@
 
 =cut
 
-our $version = '1.0.5';
+our $version = '1.0.6';
 
 =head1 SYPNOSIS
 
@@ -17,6 +17,7 @@ our $version = '1.0.5';
                   [-x <fraction_for_scaffolding>] [-l <sspace_long_options>]
                   [-n <repeat_block_size>] [-m <coverage_ratio4repeats>]
                   [-z <breaks_overlap>] [-a <highest_ori_position>]
+                  [-j <startend_margin_circ>] [-k <overlap_length_circ>]
                   [-C] [-V] [-v]
 
 =head2 I<Flags:>
@@ -75,6 +76,14 @@ B<breaks_overlap>         overlap produced during repeats breaks (default 0)
 =item -a
 
 B<highest_oripos>         highest position to set up an origin (default 1)
+
+=item -j
+
+B<start_end_margin_circ>  start-end margin to check circularity (default 10)
+
+=item -k
+
+B<overlap_length_circ>    overlap length  to check circularity (default 100)
 
 =item -C
 
@@ -166,11 +175,12 @@ use Bio::Tools::Run::StandAloneBlastPlus;
 use Math::BigFloat;
 
 our ($opt_i, $opt_t, $opt_o, $opt_r, $opt_b, $opt_s, $opt_c, $opt_x, $opt_l, 
-     $opt_n, $opt_m, $opt_z, $opt_a, $opt_C, $opt_V, $opt_v, $opt_h);
-getopts("i:t:o:r:b:s:c:x:l:n:m:z:a:CVvh");
+     $opt_n, $opt_m, $opt_z, $opt_a, $opt_j, $opt_k, $opt_C, $opt_V, $opt_v, 
+     $opt_h);
+getopts("i:t:o:r:b:s:c:x:l:n:m:z:a:j:k:CVvh");
 if (!$opt_i && !$opt_t && !$opt_o && !$opt_r && !$opt_b && !$opt_s && !$opt_x
     && !$opt_l && !$opt_c && !$opt_n && !$opt_m && !$opt_z && !$opt_a && 
-    !$opt_C && !$opt_V && !$opt_v && !$opt_h) {
+    !$opt_j && !$opt_k && !$opt_C && !$opt_V && !$opt_v && !$opt_h) {
     print "There are n\'t any tags. Print help\n\n";
     help();
 }
@@ -356,6 +366,35 @@ if ($opt_a) {
 }
 
 print STDERR "\tHighest position to set up origin: $orimargin\n";
+
+my $mar = 10;
+if ($opt_j) {
+
+    unless ($opt_j =~ m/^\d+$/) {
+	
+	die("ERROR: -j <start_end_margins_circularity_check> isnt numeric.\n");
+    }
+    else {
+	
+	$mar = $opt_j;
+    }
+}
+print STDERR "\tStarting-End margin to check circularity: $mar\n";
+
+
+my $ovl = 100;
+if ($opt_k) {
+
+    unless ($opt_k =~ m/^\d+$/) {
+	
+	die("ERROR: -a <overlap_length_circularity_check> isnt numeric.\n");
+    }
+    else {
+	
+	$ovl = $opt_k;
+    }
+}
+print STDERR "\tOverlap length to check circularity: $ovl\n";
 
 ## Process the passing options
 
@@ -1029,16 +1068,12 @@ else {
 
 print STDERR "\t4.2- Checking circularity\n";
 
-## It will use the check circularity script;
-## It will produce the output as stdout, so it will redirect the
-## the output into a file
+## It will use the check circularity function
 
-my $temp_cc = File::Spec->catfile($outdir, "04_2_checkcirc_tempdir");
 my $checkcirc_out = File::Spec->catfile($outdir, "04_2_checkcirc_out.txt");
-my $checkcirc_cmd = "check_circularity.pl $assembly03 $temp_cc";
-$checkcirc_cmd .= " --min_overlap_len 100 --force > $checkcirc_out";
-my @checkcirc01run = run( command => $checkcirc_cmd, verbose => $opt_V );
 
+my @overlap = check_circularity($assembly03, \%exepath, $checkcirc_out, $mar, 
+				$ovl);
 
 ## By default define the assembly 04 as 03
 my $assembly04 = $assembly03;
@@ -1046,102 +1081,74 @@ my $assembly04 = $assembly03;
 my $it_is_circular = 0;
 my $it_doesnt_have_Ns = 0;
 
-open my $checkcirc_fh, '<', $checkcirc_out;
-while(<$checkcirc_fh>) {
+if (scalar(@overlap) > 0) {
 
-    chomp($_);
-    ## It will break the line based in spaces
-    ## Two options
-    ## A- ID<space>linear
-    ## B- ID<space>circular<space>[i_start-i_end]<space>matches<space>
-    ##    [f_start-f_end]<space>with<space>Percentage%<space>identity
-    
-    my @circout = split(/\s+/, $_); 
-    
-    if ($circout[1] =~ m/circular/) {
+    $it_is_circular = 1;
 
-        my ($p_st, $p_en, $e_st, $e_en, $perc);
-	if ($circout[2] =~ m/^\[(\d+)\-(\d+)\]$/) {
+    print STDERR "\tCircularity found: $overlap[0]-$overlap[1] matches ";
+    print STDERR "$overlap[2]-$overlap[3] ($overlap[4] %)\n";
+
+    ## With the circularity found, it will break the sequence and redo it
+    ## based in the circularity and the origin
+    ## 1    2                 3                          4   5
+    ## XXXXXX-----------------O--------------------------XXXXX
 	
-	    $p_st = $1;
-	    $p_en = $2; 
-	}
-	if ($circout[4] =~ m/^\[(\d+)\-(\d+)\]$/) {
+    my $asb04io = Bio::SeqIO->new(-file => "$assembly03", -type => 'fasta');
+    $assembly04 = File::Spec->catfile($outdir,"04_2_assembly_nocirc.fasta");
+    my $asb05io = Bio::SeqIO->new(-file => ">$assembly04",-type => 'fasta');
 	
-	    $e_st = $1;
-	    $e_en = $2; 
-	}
-	if ($circout[6] =~ m/^(.+)%$/) {
-	
-	    $perc = $1;
-	}
+    print STDERR "\tRemoving redundancy from circularity\n\n";
 
-	$it_is_circular = 1;
+    while (my $wseqobj = $asb04io->next_seq()) {
 
-        print STDERR "\tCircularity found: $p_st-$p_en matches ";
-	print STDERR "$e_st-$e_en ($perc %)\n";
+	## First get the truncated sequence without the overlap
+	##
+	## 1    2                 3                         4   
+	## XXXXXX-----------------O--------------------------
 
-        ## With the circularity found, it will break the sequence and redo it
-	## based in the circularity and the origin
-	## 1    2                 3                          4   5
-	## XXXXXX-----------------O--------------------------XXXXX
-	
-        my $asb04io = Bio::SeqIO->new(-file => "$assembly03", -type => 'fasta');
-        $assembly04 = File::Spec->catfile($outdir,"04_2_assembly_nocirc.fasta");
-        my $asb05io = Bio::SeqIO->new(-file => ">$assembly04",-type => 'fasta');
-	
-	print STDERR "\tRemoving redundancy from circularity\n\n";
+	my $c_end = $overlap[2] - 1;
+	my $subseq01 = $wseqobj->trunc(1, $c_end);
+	my $newid = $subseq01->id()."_1_".$c_end;
+	$subseq01->id($newid);
 
-        while (my $wseqobj = $asb04io->next_seq()) {
+	## Second, if it has an origin, set up
 
-	    ## First get the truncated sequence without the overlap
-	    ##
-	    ## 1    2                 3                         4   
-	    ## XXXXXX-----------------O--------------------------
-
-	    my $c_end = $e_st - 1;
-            my $subseq01 = $wseqobj->trunc(1, $c_end);
-            my $newid = $subseq01->id()."_1_".$c_end;
-            $subseq01->id($newid);
-
-	    ## Second, if it has an origin, set up
-
-	    if ($origin =~ m/^\d+$/) {
+	if ($origin =~ m/^\d+$/) {
 	    
-		my $subseq02obj = $subseq01->trunc(1, $origin - 1);
-		my $end = $subseq01->length();
-		my $subseq03obj = $subseq01->trunc($origin, $end);
-		my $mergeseq = $subseq03obj->seq() . $subseq02obj->seq();
+	    my $subseq02obj = $subseq01->trunc(1, $origin - 1);
+	    my $end = $subseq01->length();
+	    my $subseq03obj = $subseq01->trunc($origin, $end);
+	    my $mergeseq = $subseq03obj->seq() . $subseq02obj->seq();
 
-		$newid =  $subseq01->id()."_NewOri_1_".$c_end;
-		my $newseqobj = Bio::PrimarySeq->new( 
-		    -seq => $mergeseq, -id => $newid );
-		
-		if ($str eq '-') {
-		    $newseqobj = $newseqobj->revcom();
-		}
-
-		## Before write it check if it has Ns
-
-		my $checkseq = $newseqobj->seq();
-		if ($checkseq !~ m/N/i) {
-		
-		    $it_doesnt_have_Ns = 1;
-		}
-
-		$asb05io->write_seq($newseqobj);
+	    $newid =  $subseq01->id()."_NewOri_1_".$c_end;
+	    my $newseqobj = Bio::PrimarySeq->new( 
+		-seq => $mergeseq, -id => $newid );
+	    
+	    if ($str eq '-') {
+		$newseqobj = $newseqobj->revcom();
 	    }
-	    else {
+
+	    ## Before write it check if it has Ns
+
+	    my $checkseq = $newseqobj->seq();
+	    if ($checkseq !~ m/N/i) {
 		
-		$asb05io->write_seq($subseq01);
+		$it_doesnt_have_Ns = 1;
 	    }
+	    
+	    $asb05io->write_seq($newseqobj);
 	}
-    }
-    elsif ($checkcirc_out =~ m/linear/) {
-
-	print STDERR "\tNo circularity detected.\n\n";
+	else {
+	    
+	    $asb05io->write_seq($subseq01);
+	}
     }
 }
+else {
+    
+    print STDERR "\tNo circularity detected.\n\n";
+}
+
 
 my @seqstats03 = get_seqstats($assembly04, $refsize);
 print_seqstats("Assembly Step 3 Results", \@seqstats03);
@@ -1744,6 +1751,8 @@ sub help {
 			     [-m <coverage_ratio4repeats>] 
 			     [-z <breaks_overlap>]
 			     [-a <highest_ori_position>]
+			     [-j <start_end_margin_circ>]
+			     [-k <overlap_length_circ>]
 		             [-C] [-V] [-v]
 
     Description:
@@ -1803,6 +1812,8 @@ sub help {
       -m <cov_rep_ratio>    cov. ratio to define repetitive region (def. 1.6)
       -z <breaks_overlap>   overlap for the repeat subseqs (default 0)
       -a <highest_oripos>   highest position to set up origin (default 1)
+      -j <startend_margin>  start-end margin to check circularity (default 10)
+      -k <overlap_length>   overlap length to check circularity (default 100)
       -C <check_complet>    check completeness after the check_circular
       -V <be_verbose>       be verbose and print the parsing status.
       -v <version>          print version
@@ -2511,4 +2522,121 @@ sub find_origin {
     }
 
     return ($origin, $str);
+}
+
+
+###############################################################################
+## This function replace the check circularity script from Sprai
+## It has been made to deal with the possible problem related with the
+## chloroplast repeat
+##
+## Standard conditions:
+## e.g. m.musculus mitochondrial genome 
+##      assembly size 18,278
+##      selfblastN (-outfmt '6 std qlen slen' out) produces three hits:
+##        s1 s1 100.000 18278 0 0     1 18278     1 18278 0.0 33754 18278 18278
+##        s1 s1  99.648  1987 0 7 16295 18278     1  1983 0.0  3624 18278 18278
+##        s1 s1  99.648  1987 0 7     1  1983 16295 18278 0.0  3624 18278 18278
+##    
+##        First hit is the selfblast and the second and third are the reciprocal
+##        hits that defines the circularity of the sample
+##
+##  Circular assembly properties:
+##  1- Two partial hits: 
+##        a) qstart=1            qend=ovl_len sstart=slen-ovl_len send=slen
+##        b) qstart=slen-ovl_len qend=slen    sstart=1            send=ovl_len
+##  2- High identity percentage      
+
+sub check_circularity {
+    my $query = shift;
+    my $exepath_href = shift;
+    my $outfile = shift;
+
+    ## Define for the future the starting/end margin and the overlap length
+    my $mar = shift;
+    my $ovl = shift;
+
+    ## Define the output variables
+    my ($begin_ovl_st, $begin_ovl_en, $end_ovl_st, $end_ovl_en);
+    my @overlap = ();
+
+    my %exepath = %{$exepath_href};
+
+    ## SelfBlastN run
+    my $bl02cmd = "$exepath{'blastn'} -task megablast -query $query ";
+    $bl02cmd .= "-subject $query -out $outfile ";
+    $bl02cmd .= "-outfmt '6 std qlen slen' ";
+	
+    ## Run the command
+    my @bl02run = run( command => $bl02cmd, verbose => $opt_V );
+    
+    ## Process the output
+
+    open my $sb_fh, '<', $outfile;
+    
+    while(<$sb_fh>) {
+	    
+	chomp($_);	    
+	my ($qseqid, $sseqid, $pident, $length, $mismatch, $gapopen, 
+	    $qstart, $qend, $sstart, $send, $evalue, $bitscore, $qlen, 
+	    $slen) = split(/\t/, $_);
+	
+	## Define the switch variables for beginning and end of the assembly
+	my $begin_ovlp = 0;
+	my $end_ovlp = 0;
+
+	if ($qstart == 1 && $qend == $qlen && $sstart == 1 && $send == $qlen) {
+	
+	    ## Self-hit, do nothing
+	    print STDERR "TEST: Selfhit line: $_\n";
+	}
+	else {
+	
+	    ## Define begining and end of the sequence with some margins
+	    ## such as +/- 10 nt
+	    ## Define also the minimum overlapping length such as 100 bp
+	    
+	    ## So a hit is at the begining if $qtart <= 10; $qen >= 100+$qstart 
+	    ## A hit is at end if $qstart <= $qlen-$qen-100; $end >= $qlen-10
+	    ## This could be for query or subject
+
+	    if ($qstart <= $mar && $qend >= ($ovl + $qstart) ) {
+	    
+		$begin_ovlp = 1; 
+		$begin_ovl_st = $qstart;
+		$begin_ovl_en = $qend;
+	    }
+	    elsif ($qstart <= ($qlen - $ovl) && $qend >= $qlen - $mar) {
+	    
+		$end_ovlp = 1;
+		$end_ovl_st = $qstart;
+		$end_ovl_en = $qend;
+	    }
+
+	    if ($sstart <= $mar && $send >= ($ovl + $sstart) ) {
+	    
+		$begin_ovlp = 1;
+		$begin_ovl_st = $sstart;
+		$begin_ovl_en = $send;
+	    }
+	    elsif ($sstart <= ($slen - $ovl) && $send >= $slen - $mar) {
+	    
+		$end_ovlp = 1;
+		$end_ovl_st = $sstart;
+		$end_ovl_en = $send;
+	    }
+	}
+
+	## Now it will select the overlap
+	
+	if ($begin_ovlp == 1 && $end_ovlp == 1) {
+	
+	    push @overlap, ($begin_ovl_st, $begin_ovl_en);
+	    push @overlap, ($end_ovl_st, $end_ovl_en);
+	    push @overlap, $pident;
+	    print STDERR "TEST: overlap found: $_\n";
+	}        
+    }
+
+    return @overlap;
 }

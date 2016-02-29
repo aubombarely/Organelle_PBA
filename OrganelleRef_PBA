@@ -2588,7 +2588,7 @@ sub check_circularity {
 	if ($qstart == 1 && $qend == $qlen && $sstart == 1 && $send == $qlen) {
 	
 	    ## Self-hit, do nothing
-	    print STDERR "TEST: Selfhit line: $_\n";
+	    ## print STDERR "TEST: Selfhit line: $_\n";
 	}
 	else {
 	
@@ -2634,7 +2634,7 @@ sub check_circularity {
 	    push @overlap, ($begin_ovl_st, $begin_ovl_en);
 	    push @overlap, ($end_ovl_st, $end_ovl_en);
 	    push @overlap, $pident;
-	    print STDERR "TEST: overlap found: $_\n";
+	    ## print STDERR "TEST: overlap found: $_\n";
 	}        
     }
 

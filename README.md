@@ -67,3 +67,18 @@ mkdir chloro_out
 OrganelleRef_PBA -i MySpeciesPacBio.fastq -r MyReferenceCHL.fasta -o chloro_out
 ```
 
+TESTING THE PIPELINE
+--------------------
+
+You can test the script with the test data. This data is a subset of the Arabidopsis thaliana PacBio data publicly available at SRA with the accession SRR1284093.
+
+```
+gunzip artha_pacbioSRR1284093_c025k.fastq.gz
+gunzip artha_refchl01_artha.fa.gz
+
+mkdir artha_chl
+OrganelleRef_PBA -i artha_pacbioSRR1284093_c025k.fastq -r artha_refchl01_artha.fa -o artha_chl
+```
+
+Note: To speed up the process you can use multiple threads through different variables such as ``` -b '-nproc=40' -s 'num_threads=40' ```
+

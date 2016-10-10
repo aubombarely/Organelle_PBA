@@ -7,7 +7,7 @@
 
 =cut
 
-our $version = '1.0.6';
+our $version = '1.0.7';
 
 =head1 SYPNOSIS
 
@@ -18,6 +18,7 @@ our $version = '1.0.6';
                   [-n <repeat_block_size>] [-m <coverage_ratio4repeats>]
                   [-z <breaks_overlap>] [-a <highest_ori_position>]
                   [-j <startend_margin_circ>] [-k <overlap_length_circ>]
+                  [-q <min_blasr_align_perc>]
                   [-C] [-V] [-v]
 
 =head2 I<Flags:>
@@ -84,6 +85,10 @@ B<start_end_margin_circ>  start-end margin to check circularity (default 10)
 =item -k
 
 B<overlap_length_circ>    overlap length  to check circularity (default 100)
+
+=item -q
+
+B<min_blasr_align_perc>   minimum alignment percentage for BlasR (default 5)
 
 =item -C
 
@@ -175,12 +180,12 @@ use Bio::Tools::Run::StandAloneBlastPlus;
 use Math::BigFloat;
 
 our ($opt_i, $opt_t, $opt_o, $opt_r, $opt_b, $opt_s, $opt_c, $opt_x, $opt_l, 
-     $opt_n, $opt_m, $opt_z, $opt_a, $opt_j, $opt_k, $opt_C, $opt_V, $opt_v, 
-     $opt_h);
-getopts("i:t:o:r:b:s:c:x:l:n:m:z:a:j:k:CVvh");
+     $opt_n, $opt_m, $opt_z, $opt_a, $opt_j, $opt_k, $opt_q, $opt_C, $opt_V, 
+     $opt_v, $opt_h);
+getopts("i:t:o:r:b:s:c:x:l:n:m:z:a:j:k:q:CVvh");
 if (!$opt_i && !$opt_t && !$opt_o && !$opt_r && !$opt_b && !$opt_s && !$opt_x
     && !$opt_l && !$opt_c && !$opt_n && !$opt_m && !$opt_z && !$opt_a && 
-    !$opt_j && !$opt_k && !$opt_C && !$opt_V && !$opt_v && !$opt_h) {
+    !$opt_j && !$opt_k && !$opt_q && !$opt_C && !$opt_V && !$opt_v && !$opt_h) {
     print "There are n\'t any tags. Print help\n\n";
     help();
 }
@@ -395,6 +400,23 @@ if ($opt_k) {
     }
 }
 print STDERR "\tOverlap length to check circularity: $ovl\n";
+
+## Min BlasR alignment percentage
+
+my $mbap = 5;
+if ($opt_q) {
+
+    unless ($opt_q =~ m/^\d+$/) {
+    
+	die("ERROR: -q <min_blasr_align_perc> isnt numeric.\n"); 
+    }
+    else {
+    
+	$mbap = $opt_q;
+    }
+}
+
+print STDERR "\tMinimum BlasR alignment percentage: $mbap\n";
 
 ## Process the passing options
 
@@ -659,9 +681,11 @@ my @seqsize01run = run( command => $seqsize_cmd, verbose => $opt_V );
 my $seqsize = $seqsize01run[3]->[0];
 chomp($seqsize);
 
-## The PacBio ID can be: 
-## 1-ID/digit/digit_digit
+## The PacBio ID can be:
+## 4-ID/difit/digit_digit/digit_digit 
+## 3-ID/digit/digit_digit
 ## 2-ID/digit
+## 1-ID
 ## It will analyze the blasr_in file to determine what kind of type it is
 
 my $checkidtype_cmd = "grep '>' $blasr_in | head -n 1";
@@ -669,13 +693,8 @@ my @checkidtype01run = run( command => $checkidtype_cmd, verbose => $opt_V );
 my $firstid = $checkidtype01run[3]->[0];
 chomp($firstid);
 
-my $seqidtype = 2;
-if ($firstid =~ m/^>.+\/\d+\/\d+_\d+/) {
-
-    $seqidtype = 1;
-}
-
-
+my @firstid_split = split(/\//, $firstid); 
+my $seqidtype = scalar(@firstid_split);
 
 $seqcounter = $seqcount;
 
@@ -740,6 +759,10 @@ my $total_len = 0;
 while(<$blasrout_fh>) {
 
     chomp($_);
+
+    ## BlasR output fields are:
+    ## 0-qName 1-tName 2-qStrand 3-tStrand 4-score 5-percentSimilarity 6-tStart
+    ## 7-tEnd 8-tLength 9-qStart 10-qEnd 11-qLength 12-nCells    
     my @line = split(/\s+/, $_);
 
     ## BlasR output add an extra /0_\d+ at the end of the line
@@ -747,18 +770,34 @@ while(<$blasrout_fh>) {
     ## It will modify this formating depending of the ID type detected
    
     my @id = split(/\//, $line[0]);
-    my $len = $line[11];
+
+    ## Now it will adjust the ID to the id type
+    my $idtype = scalar(@id);
+    while($idtype >  $seqidtype) {
     
-    if (scalar(@id) > 1 && $seqidtype == 2) {
 	pop(@id);
+	$idtype = scalar(@id);
     }
+
+    if ($idtype < $seqidtype) {
+    
+	die("ERROR: BlasR SeqID is different from Fastq input file.\n");
+    }
+
+    my $len = $line[11];
+
+    ## Filter by %alignment with the target (qEnd - qStart) * 100 / qLength
+    my $qbap = ($line[10] - $line[9]) * 100 / $line[11];
     my $id = join("/", @id); 
 
-    $selected_ids{$id} = $len;
-    $l++;
-    $total_len += $len;
-    print $blasrhit_fh "$id\n";
-} 
+    if ($qbap >= $mbap) {
+ 
+	$selected_ids{$id} = $len;
+	$l++;
+	$total_len += $len;
+	print $blasrhit_fh "$id\n";
+    } 
+}
 
 print STDERR "\t      $l reads ($total_len bp) will be selected\n";
 $gstats{'01_mapped_reads'} = $l;
@@ -1753,6 +1792,7 @@ sub help {
 			     [-a <highest_ori_position>]
 			     [-j <start_end_margin_circ>]
 			     [-k <overlap_length_circ>]
+			     [-q <min_blasr_align_perc>]
 		             [-C] [-V] [-v]
 
     Description:
@@ -1814,6 +1854,7 @@ sub help {
       -a <highest_oripos>   highest position to set up origin (default 1)
       -j <startend_margin>  start-end margin to check circularity (default 10)
       -k <overlap_length>   overlap length to check circularity (default 100)
+      -q <min_bR_alignperc> minimum alignment percentage for BlasR (default 5)
       -C <check_complet>    check completeness after the check_circular
       -V <be_verbose>       be verbose and print the parsing status.
       -v <version>          print version

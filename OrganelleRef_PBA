@@ -7,7 +7,7 @@
 
 =cut
 
-our $version = '1.0.7';
+our $version = '1.0.8';
 
 =head1 SYPNOSIS
 
@@ -519,9 +519,9 @@ my %blasr_args = ();
 ## produce problems downstream to process the output
 
 my %blasr_ban = (
-    '-sam'    => 1,
-    '-m'      => 1,
-    '-header' => 1,
+    '--sam'    => 1,
+    '--m'      => 1,
+    '--header' => 1
     );
 
 if ($blasr_argsline) {
@@ -537,8 +537,8 @@ if ($blasr_argsline) {
     }
 
     foreach my $b_argline (split(/,/, $blasr_argsline)) {
-    
-	if ($b_argline =~ m/^(-\w+)=?(\w*)$/) {
+   
+	if ($b_argline =~ m/^(-+\w+)=?(\w*)$/) {
 	
 	    my $b_arg = $1;
 	    my $b_val = $2;
@@ -701,13 +701,13 @@ $seqcounter = $seqcount;
 ## It will overwrite the out
 
 my $blasr_out = File::Spec->catfile($outdir, "01_2_BlasR_out.txt"); 
-if (exists $blasr_args{-out}) {
+if (exists $blasr_args{'--out'}) {
 
     warn("WARNING: BlasR out will be rewrite to $blasr_out\n");
 }
 else {
 
-    $blasr_args{'-out'} = $blasr_out;
+    $blasr_args{'--out'} = $blasr_out;
 }
 
 ## Build the $cmd line
@@ -719,7 +719,7 @@ $gstats{'00_input_reads_size'} = $seqsize;
 my @blasr_cmd = ($exepath{'blasr'}, $blasr_in, $orgref);
 foreach my $blasr_k (sort keys %blasr_args) {
 
-    push @blasr_cmd, $blasr_k;
+    push @blasr_cmd, $blasr_k;	
     if (defined $blasr_args{$blasr_k}) {
     
 	push @blasr_cmd, $blasr_args{$blasr_k};

@@ -509,6 +509,26 @@ foreach my $exec_key (sort keys %exec_list) {
     }
 }
 
+## Check that bedtools version is v2.20.0 or superior
+my $checkbedv_cmd = "bedtools --version";
+my @checkbedv01run = run( command => $checkbedv_cmd, verbose => $opt_V );
+my $bedversion = $checkbedv01run[3]->[0];
+$bedversion =~ s/bedtools v//;
+my @bedversion = split(/\./, $bedversion);
+
+my $lowerbedversion = 0;
+if ($bedversion[0] < 2) {
+
+    $lowerbedversion = 1;
+}
+elsif ($bedversion[1] < 20) {
+
+    $lowerbedversion = 1;
+}
+
+if ($lowerbedversion == 1) {
+    die("\nERROR: Please use Bedtools version 2.20.0 or above.\n");
+}
 
 ## Get the permited options
 
@@ -1297,11 +1317,34 @@ if ($endscript == 0) {
     ## To evaluate the repetitive region it will map back the
     ## reads and check the coverage.
 
-    my $blasr2out = File::Spec->catfile($outdir, "05_1_BlasR_out.sam"); 
-    $blasr_args{'-out'} = $blasr2out;
+    ## New versions of BlasR can produce BAM files but it needs to
+    ## have the fasta in a special format
+    ## the ID should have {movie}/{zmw}/{start}_{end} with start
+    ## in the zero coordinate
 
+    ## We will produce this input using Bio::SeqIO
 
-    my @blasr2cmd = ($exepath{'blasr'}, $blasr_in, $assembly04);
+    print STDERR "TESTING $blasr_in should be FASTA\n";
+    my $in1seqio = Bio::SeqIO->new( -file => $blasr_in, -format => "fasta");
+    my $out1 = File::Spec->catfile($outdir, "05_1_BlasR_in.fasta");
+    my $out1seqio = Bio::SeqIO->new( -file => ">$out1", -format => "fasta" );
+    while(my $seq1obj = $in1seqio->next_seq() ) {
+
+	my $id = $seq1obj->id();
+	if ($id =~ m/^(\w+)/) {
+	    
+	    $id = $1;
+	}
+	my $len = $seq1obj->length();
+	my $newid = $id . "/0/0_" . $len;
+	$seq1obj->id($newid);
+	$out1seqio->write_seq($seq1obj);
+    }
+
+    my $blasr2out = File::Spec->catfile($outdir, "05_1_BlasR_out.bam"); 
+    $blasr_args{'--out'} = $blasr2out;
+
+    my @blasr2cmd = ($exepath{'blasr'}, $out1, $assembly04);
     foreach my $blasr_k (sort keys %blasr_args) {
 
 	push @blasr2cmd, $blasr_k;
@@ -1313,27 +1356,23 @@ if ($endscript == 0) {
 
     ## Additionally it will add --sam and the output
 
-    push @blasr2cmd, "-sam";
+    push @blasr2cmd, "--bam";
 
     print STDERR "\t5.1- Running BlasR re-mapping.\n\n";
 
     my @blasr02run = run( command => \@blasr2cmd, verbose => $opt_V );
 
     ## Once the blast is done, it will process the file
-    ## 1- Sam to Bam
-    ## 2- Bam sort
+    ## The new version of BlasR can output bam files
+    ## Nevertheless the reads needs to be in bam file
+    ## so it will convert the fastq files to bam and then
+    ## run BlasR. Other option it is to add {movie}/{zmw}/{start}_{end}
+    ## to the fasta file
+    ## 1- Bam sort
 
-    my $bamout = File::Spec->catfile($outdir, "05_1_BlasR_out.bam");
-    my $samtools01cmd = "$exepath{samtools} view -F4 -Sb -o $bamout $blasr2out";
+    my $samtools02cmd = "$exepath{samtools} sort -o $blasr2out $blasr2out";
 
-    print STDERR "\t5.2- Running samtools view (Sam to Bam).\n\n";
-
-    my @sam01run = run( command => $samtools01cmd, verbose => $opt_V );
-
-    my $bamout_s = File::Spec->catfile($outdir, "05_2_BlasR_out");
-    my $samtools02cmd = "$exepath{samtools} sort $bamout $bamout_s";
-
-    print STDERR "\t5.3- Sorting bam file.\n\n";
+    print STDERR "\t5.2- Sorting bam file.\n\n";
 
     my @sam02run = run( command => $samtools02cmd, verbose => $opt_V );
 
@@ -1359,10 +1398,13 @@ if ($endscript == 0) {
 
     ## And then, run bedtools genome cov
 
-    print STDERR "\t5.4- Calculating coverage.\n\n";
+    print STDERR "\t5.3- Calculating coverage.\n\n";
+
+    ## Updated to the new version of bedtools (>v2.20.0)
+    ## that use new CIGAR lines
 
     my $bedexe = $exepath{bedtools};
-    my $bedgc01cmd = "$bedexe genomecov -d -ibam $bamout -g $gemsize";
+    my $bedgc01cmd = "$bedexe genomecov -d -ibam $blasr2out -g $gemsize";
 
     ## It will redirect this into a file
     my $gcfile01 = File::Spec->catfile($outdir, "05_4_assembly_coverage.bed");
@@ -1402,7 +1444,7 @@ if ($endscript == 0) {
     $gstats{'05_coverage_mean'} = $covstats{c_average};
     $gstats{'05_coverage_total'} = $covstats{total_cov};
 
-    print STDERR "\t5.5- Getting the breaking points\n";
+    print STDERR "\t5.4- Getting the breaking points\n";
 
     ## Now it will get the sequence break points based in the blocks 
     my $breakpoints_href = get_breakpoints($covstats{covdata});
@@ -1430,7 +1472,7 @@ if ($endscript == 0) {
 	## do the revcom
 	## and rescaffold the four fragments.
 
-	print STDERR "\t5.6.1- Breaking the assembly.\n";
+	print STDERR "\t5.5.1- Breaking the assembly.\n";
     
 	my $asb04io = Bio::SeqIO->new(-file => "$assembly04", -type => 'fasta');
 	my $assembly05 = File::Spec->catfile($outdir,
@@ -1486,7 +1528,7 @@ if ($endscript == 0) {
 	}
 
 	print STDERR "\t$assembly04 has been broken in $c subsequences.\n\n";
-	print STDERR "\t5.6.2- Comparing fragments.\n";
+	print STDERR "\t5.5.2- Comparing fragments.\n";
 
 	## It will compare the fragments using a self blast
 	## 1- Create the DB with makeblastdb
@@ -1593,7 +1635,7 @@ if ($endscript == 0) {
 	## At this point the script it ready to produce the sequences that will
 	## be rescaffolded
 	
-	print STDERR "\n\t5.6.3- Selecting the no-redundant sequence set\n";
+	print STDERR "\n\t5.5.3- Selecting the no-redundant sequence set\n";
 	my $asb06io = Bio::SeqIO->new(-file => "$assembly05", -type => 'fasta');
 	my $assembly06 = File::Spec->catfile($outdir,
 					     "05_6_assembly04breaks.fasta");
@@ -1644,7 +1686,7 @@ if ($endscript == 0) {
 	    }	
 	}
 
-	print STDERR "\n\t5.6.4- Rescaffolding the contigs with SSPACE-Long.\n";
+	print STDERR "\n\t5.5.4- Rescaffolding the contigs with SSPACE-Long.\n";
 
 	## To accelerate the SSPACE long it will run BlasR separately and then
 	## Copy the file to $sspace2_out/intemediate_files/BLASR_results.txt
@@ -2461,7 +2503,7 @@ sub run_sspace_long {
     
     ## Overwrite the blasr_arg{-out}
     my $preblasr_out = File::Spec->catfile($sspace_out, "preBLASR_out.txt");
-    $blasr_args{'-out'} = $preblasr_out;
+    $blasr_args{'--out'} = $preblasr_out;
     
     foreach my $blasr_k (sort keys %blasr_args) {
 
@@ -2479,7 +2521,7 @@ sub run_sspace_long {
 
     my $fblasr = File::Spec->catfile($sspace_int, "BLASR_results.txt");
     open my $bou_fh, '>', $fblasr;
-    open my $bin_fh, '<', $blasr_args{'-out'};
+    open my $bin_fh, '<', $blasr_args{'--out'};
     while(<$bin_fh>) {
     
 	chomp($_);

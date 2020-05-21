@@ -22,15 +22,15 @@ The different steps are:
 SOFTWARE REQUIREMENTS
 ---------------------
 
-* [BioPerl](http://www.bioperl.org/wiki/Installing_BioPerl) -- (used to process sequences)
+* [BioPerl](https://github.com/bioperl/bioperl-live/blob/master/README.md) -- (used to process sequences)
 * [Seqtk](https://github.com/lh3/seqtk) -- (used to change formats fastq/fasta)
 * [BlastN](https://blast.ncbi.nlm.nih.gov/Blast.cgi?PAGE_TYPE=BlastDocs&DOC_TYPE=Download) -- (used for the assembly, find origin and check circularity)
-* [BlasR](https://github.com/PacificBiosciences/blasr/blob/master/README.INSTALL.md) -- (used to get the organelle related reads)
+* [BlasR](https://github.com/PacificBiosciences/blasr/wiki/Blasr-Installation-Qs-&-As) -- (used to get the organelle related reads)
 * [Samtools](http://samtools.sourceforge.net/) -- (used to process BlasR output for coverage)
 * [Bedtools](http://bedtools.readthedocs.org/en/latest/) -- (used to calculate coverage for the repeat analysis)
 * [Sprai](http://zombie.cb.k.u-tokyo.ac.jp/sprai/README.html) -- (used for de-novo assembly)
-* [WGS-Assembler](http://wgs-assembler.sourceforge.net) -- (used for de-novo asembly by Sprai)
-* [SSPACE-Long](http://www.baseclear.com/genomics/bioinformatics/basetools/SSPACE-longread) -- (used for the rescaffolding)
+* [WGS-Assembler](https://sourceforge.net/projects/wgs-assembler/) -- (used for de-novo asembly by Sprai)
+* [SSPACE-Long](https://www.baseclear.com/services/bioinformatics/basetools/sspace-longread/) -- (used for the rescaffolding)
 
 Note: SSPACE-Long uses getopt that it is not present in the Perl5 corelib. To fix this problem you can install it with ```cpan Perl4::CoreLibs```.
 
@@ -42,7 +42,7 @@ INSTALLATION
 
 To install the program
 
-```
+```sh
 git clone https://github.com/aubombarely/Organelle_PBA.git
 ```
 
@@ -58,13 +58,34 @@ Once the directory is copied, you'll need to set up the environmental variables 
     export BEDTOOLS_PATH=<path_to_bedtools_binaries>;
 ```
 
+INSTALLATION FROM DOCKER
+------------------------
+
+To install using docker
+
+```sh
+git clone https://github.com/cgjosephlee/Organelle_PBA.git  # currently my forked repo
+cd Organelle_PBA
+# SSPACE is not available in public domain, so
+# acquire SSPACE from https://www.baseclear.com/services/bioinformatics/basetools/sspace-longread/
+cp /path/to/SSPACE-LongRead.pl vendor/
+chmod +x vendor/SSPACE-LongRead.pl
+
+docker build -t aubombarely/organelle_pba .
+docker run --rm aubombarely/organelle_pba
+```
+
 QUICK USAGE GUIDE
 -----------------
 
-```
+```sh
 mkdir chloro_out
 
 OrganelleRef_PBA -i MySpeciesPacBio.fastq -r MyReferenceCHL.fasta -o chloro_out
+
+# or use docker
+docker run --rm -v $PWD:/data --user $UID:$GID aubombarely/organelle_pba \
+    OrganelleRef_PBA -i MySpeciesPacBio.fastq -r MyReferenceCHL.fasta -o chloro_out
 ```
 
 TESTING THE PIPELINE
@@ -72,13 +93,14 @@ TESTING THE PIPELINE
 
 You can test the script with the test data. This data is a subset of the Arabidopsis thaliana PacBio data publicly available at SRA with the accession SRR1284093.
 
-```
-gunzip artha_pacbioSRR1284093_c025k.fastq.gz
-gunzip artha_refchl01_artha.fa.gz
+```sh
+cd testdata
+gzip -d artha_pacbioSRR1284093_c025k.fastq.gz artha_refchl01_artha.fa.gz
 
-mkdir artha_chl
+mkdir -p artha_chl
 OrganelleRef_PBA -i artha_pacbioSRR1284093_c025k.fastq -r artha_refchl01_artha.fa -o artha_chl
+# runs for ~30 min using 40 cores
 ```
 
-Note: To speed up the process you can use multiple threads through different variables such as ``` -b '-nproc=40' -s 'num_threads=40' ```
+Note: To speed up the process you can use multiple threads through different variables such as ``` -b '--nproc=40' -s 'num_threads=40' ```
 
